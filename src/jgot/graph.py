@@ -1,3 +1,9 @@
+"""Graph validation and :class:`jgot.GraphSpec` construction.
+
+Preprocessing lives here on the Python/NumPy side, outside the JAX/JIT hot
+path.
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -10,6 +16,8 @@ from .types import GraphSpec
 
 
 def _as_int_array(values: Iterable[int]) -> np.ndarray:
+    """Coerce a one-dimensional integer-like input into a NumPy array."""
+
     arr = np.asarray(values, dtype=np.int32)
     if arr.ndim != 1:
         raise ValueError("expected a one-dimensional integer array")
@@ -17,6 +25,8 @@ def _as_int_array(values: Iterable[int]) -> np.ndarray:
 
 
 def _as_float_array(values: Iterable[float]) -> np.ndarray:
+    """Coerce a one-dimensional float-like input into a NumPy array."""
+
     arr = np.asarray(values, dtype=np.float64)
     if arr.ndim != 1:
         raise ValueError("expected a one-dimensional float array")
@@ -24,6 +34,13 @@ def _as_float_array(values: Iterable[float]) -> np.ndarray:
 
 
 def _build_reverse_edge_map(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+    """Build the reverse-edge lookup and enforce paired directed edges.
+
+    Raises:
+        ValueError: If self-loops are present, a directed edge is duplicated, a
+            reverse edge is missing, or the final reverse map is not involutive.
+    """
+
     edge_index: dict[tuple[int, int], int] = {}
     for idx, (x, y) in enumerate(zip(src.tolist(), dst.tolist(), strict=True)):
         if x == y:
@@ -46,6 +63,13 @@ def _build_reverse_edge_map(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def _check_connected(num_nodes: int, src: np.ndarray, dst: np.ndarray) -> None:
+    """Ensure the undirected graph support is connected.
+
+    Raises:
+        ValueError: If the graph has no edges or contains more than one
+            connected component.
+    """
+
     adjacency: list[list[int]] = [[] for _ in range(num_nodes)]
     for x, y in zip(src.tolist(), dst.tolist(), strict=True):
         adjacency[x].append(y)
@@ -70,6 +94,13 @@ def _check_connected(num_nodes: int, src: np.ndarray, dst: np.ndarray) -> None:
 
 
 def _normalize_pi(pi: np.ndarray) -> np.ndarray:
+    """Normalize a positive stationary distribution candidate to unit mass.
+
+    Raises:
+        ValueError: If ``pi`` is not one-dimensional or contains non-positive
+            or non-finite total mass.
+    """
+
     if pi.ndim != 1:
         raise ValueError("pi must be one-dimensional")
     if np.any(pi <= 0):
@@ -81,6 +112,8 @@ def _normalize_pi(pi: np.ndarray) -> np.ndarray:
 
 
 def _out_rate(num_nodes: int, src: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Compute the outgoing rate sum at each node."""
+
     out = np.zeros(num_nodes, dtype=np.float64)
     np.add.at(out, src, q)
     return out
@@ -97,6 +130,13 @@ def _validate_stationarity(
     atol: float,
     rtol: float,
 ) -> None:
+    """Validate that ``pi`` is stationary for the supplied directed rates.
+
+    Raises:
+        ValueError: If the nodewise stationarity residual exceeds the requested
+            tolerance.
+    """
+
     inflow = np.zeros(num_nodes, dtype=np.float64)
     np.add.at(inflow, dst, pi[src] * q)
     residual = inflow - pi * out_rate
@@ -116,6 +156,13 @@ def _validate_reversibility(
     atol: float,
     rtol: float,
 ) -> None:
+    """Validate the detailed-balance condition edge by edge.
+
+    Raises:
+        ValueError: If the detailed-balance residual exceeds the requested
+            tolerance.
+    """
+
     edge_residual = pi[src] * q - pi[dst] * q[rev]
     scale = max(1.0, float(np.max(np.abs(pi[src] * q), initial=0.0)))
     tol = atol + rtol * scale
@@ -132,6 +179,12 @@ def _infer_pi_from_reversible_rates(
     *,
     tol_ratio: float,
 ) -> np.ndarray:
+    """Infer ``pi`` from reversible directed rates using log-ratio propagation.
+
+    Raises:
+        ValueError: If cycle consistency fails or the graph is disconnected.
+    """
+
     adjacency: list[list[int]] = [[] for _ in range(num_nodes)]
     for edge_idx, x in enumerate(src.tolist()):
         adjacency[x].append(edge_idx)
@@ -177,6 +230,8 @@ def _finalize_graph(
     atol: float,
     rtol: float,
 ) -> GraphSpec:
+    """Run final graph invariants and convert validated arrays into ``GraphSpec``."""
+
     out_rate = _out_rate(num_nodes, src, q)
     _validate_reversibility(src, dst, rev, q, pi, atol=atol, rtol=rtol)
     _validate_stationarity(num_nodes, src, dst, q, pi, out_rate, atol=atol, rtol=rtol)
@@ -201,6 +256,26 @@ def build_graph_from_undirected_weights(
     atol: float = 1e-12,
     rtol: float = 1e-10,
 ) -> GraphSpec:
+    """Construct a validated graph from undirected conductances.
+
+    Args:
+        num_nodes: Total number of nodes in the graph.
+        edge_u: First endpoint of each undirected edge.
+        edge_v: Second endpoint of each undirected edge.
+        weight: Positive conductance assigned to each undirected edge.
+        atol: Absolute tolerance used by the invariant checks.
+        rtol: Relative tolerance used by the invariant checks.
+
+    Returns:
+        A validated :class:`GraphSpec` with paired directed edges and a
+        stationary distribution derived from weighted degree normalization.
+
+    Raises:
+        ValueError: If the inputs are malformed, contain invalid node ids,
+            contain non-positive weights, contain self-loops, or define a
+            disconnected graph.
+    """
+
     u = _as_int_array(edge_u)
     v = _as_int_array(edge_v)
     w = _as_float_array(weight)
@@ -239,6 +314,30 @@ def build_graph_from_directed_rates(
     rtol: float = 1e-10,
     tol_ratio: float = 1e-10,
 ) -> GraphSpec:
+    """Construct a graph from directed rates and an optional stationary law.
+
+    Args:
+        num_nodes: Total number of graph nodes.
+        src: Source node for each directed edge.
+        dst: Destination node for each directed edge.
+        q: Positive directed edge rates.
+        pi: Optional stationary distribution. If omitted, it is inferred under
+            the reversibility assumption.
+        check_reversible: Whether to enforce reversibility and stationarity
+            before returning.
+        atol: Absolute tolerance for reversibility and stationarity checks.
+        rtol: Relative tolerance for reversibility and stationarity checks.
+        tol_ratio: Tolerance for log-ratio cycle consistency while inferring
+            ``pi``.
+
+    Returns:
+        A :class:`GraphSpec` built from the directed rates.
+
+    Raises:
+        ValueError: If the rate graph is malformed, disconnected, missing a
+            reverse edge, or fails the requested invariants.
+    """
+
     src_arr = _as_int_array(src)
     dst_arr = _as_int_array(dst)
     q_arr = _as_float_array(q)

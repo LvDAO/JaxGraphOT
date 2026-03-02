@@ -1,3 +1,5 @@
+"""Top-level solve entrypoint and user-facing solver orchestration."""
+
 from __future__ import annotations
 
 import jax
@@ -11,6 +13,8 @@ Array = jax.Array
 
 
 def _validate_density(name: str, rho: Array, pi: Array, num_nodes: int) -> None:
+    """Validate one endpoint density against the graph normalization rules."""
+
     rho = jnp.asarray(rho, dtype=jnp.float64)
     if rho.ndim != 1 or rho.shape[0] != num_nodes:
         raise ValueError(f"{name} must have shape ({num_nodes},)")
@@ -22,6 +26,17 @@ def _validate_density(name: str, rho: Array, pi: Array, num_nodes: int) -> None:
 
 
 def compute_action(problem: OTProblem, state: OTState) -> Array:
+    """Compute the discrete transport action for a solved state.
+
+    Args:
+        problem: Problem definition that supplies the graph and time step.
+        state: Split state returned by the solver.
+
+    Returns:
+        The discrete action value. The reported transport distance is
+        ``sqrt(action)``.
+    """
+
     h = problem.time.h
     weights = 0.5 * h * problem.graph.q[None, :] * problem.graph.pi[problem.graph.src][None, :]
     safe = jnp.where(
@@ -33,6 +48,8 @@ def compute_action(problem: OTProblem, state: OTState) -> Array:
 
 
 def _build_trivial_state(problem: OTProblem, rho: Array) -> OTState:
+    """Build the exact zero-flow state used when the endpoints already match."""
+
     num_steps = problem.time.num_steps
     rho_path = jnp.repeat(rho[None, :], num_steps + 1, axis=0)
     rho_bar = 0.5 * (rho_path[:-1] + rho_path[1:])
@@ -53,6 +70,8 @@ def _build_trivial_state(problem: OTProblem, rho: Array) -> OTState:
 
 
 def _build_linear_warm_start(problem: OTProblem, config: OTConfig) -> OTState:
+    """Construct the default feasible warm start used before PDHG iterations."""
+
     base = initialize_state(
         problem.graph,
         jnp.asarray(problem.rho_a, dtype=jnp.float64),
@@ -89,6 +108,31 @@ def _build_linear_warm_start(problem: OTProblem, config: OTConfig) -> OTState:
 
 
 def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
+    """Solve the two-endpoint dynamic OT problem on a sparse reversible graph.
+
+    This is the main public entrypoint. The function validates the endpoint
+    densities, checks that each has shape ``(graph.num_nodes,)``, enforces
+    nonnegativity, and requires ``sum(graph.pi * rho) == 1`` for both
+    endpoints. If the endpoints already match, it returns the exact zero-action
+    shortcut. Otherwise, it runs the JAX/JIT-backed PDHG solver and returns the
+    resulting time-discrete geodesic state.
+
+    Args:
+        problem: Fully specified OT problem instance.
+        config: Optional solver configuration. Defaults are the intended
+            starting point for normal usage.
+
+    Returns:
+        An :class:`OTSolution` containing the transport distance, discrete
+        action, state trajectory, iteration count, convergence flag, and
+        diagnostics.
+
+    Raises:
+        ValueError: If either endpoint density has the wrong shape, contains
+            negative entries, or fails the ``sum(pi * rho) == 1`` normalization
+            rule.
+    """
+
     _validate_density("rho_a", problem.rho_a, problem.graph.pi, problem.graph.num_nodes)
     _validate_density("rho_b", problem.rho_b, problem.graph.pi, problem.graph.num_nodes)
 

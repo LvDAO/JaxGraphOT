@@ -1,3 +1,5 @@
+"""Projection and proximal operators used by the PDHG split solve."""
+
 from __future__ import annotations
 
 import jax
@@ -25,6 +27,25 @@ def project_ceh(
     cg_warm_start: bool = True,
     cg_preconditioner: str = "jacobi",
 ) -> tuple[Array, Array, Array, Array, Array]:
+    """Project onto the discrete continuity constraint with fixed endpoints.
+
+    Args:
+        graph: Sparse reversible graph.
+        rho: Node-density path with shape ``(N + 1, X)``.
+        m: Edge flux path with shape ``(N, E)``.
+        rho_a: Fixed initial density with shape ``(X,)``.
+        rho_b: Fixed terminal density with shape ``(X,)``.
+        cg_max_iters: Maximum number of inner CG iterations.
+        cg_tol: Residual tolerance for the inner CG solve.
+        phi0: Optional warm start for the dual potential.
+        cg_warm_start: Whether to use ``phi0``.
+        cg_preconditioner: Preconditioner identifier for the inner CG solve.
+
+    Returns:
+        A tuple ``(rho_pr, m_pr, phi, cg_residual, cg_iters)`` containing the
+        projected state, the dual potential, and CG diagnostics.
+    """
+
     rho = jnp.asarray(rho)
     m = jnp.asarray(m)
     rho_a = jnp.asarray(rho_a)
@@ -57,6 +78,17 @@ def project_ceh(
 
 
 def prox_a_star(vartheta: Array, m: Array, *, newton_iters: int) -> tuple[Array, Array]:
+    """Apply the pointwise proximal operator for the action conjugate term.
+
+    Args:
+        vartheta: Mean-related edge variable with shape ``(N, E)``.
+        m: Edge flux variable with shape ``(N, E)``.
+        newton_iters: Number of fixed Newton iterations used pointwise.
+
+    Returns:
+        The updated ``(vartheta, m)`` pair after the pointwise proximal step.
+    """
+
     vartheta = jnp.asarray(vartheta)
     m = jnp.asarray(m)
     feasible = vartheta + 0.25 * m * m <= 0.0
@@ -82,6 +114,19 @@ def project_jpm(
     rho_minus: Array,
     rho_plus: Array,
 ) -> tuple[Array, Array, Array]:
+    """Project onto the ``J±`` coupling constraint.
+
+    Args:
+        graph: Sparse reversible graph.
+        q_node: Nodewise auxiliary variable with shape ``(N, X)``.
+        rho_minus: Edge-local source densities with shape ``(N, E)``.
+        rho_plus: Edge-local destination densities with shape ``(N, E)``.
+
+    Returns:
+        A tuple ``(q_node_pr, rho_minus_pr, rho_plus_pr)`` satisfying the
+        ``J±`` consistency relation.
+    """
+
     q_node = jnp.asarray(q_node)
     rho_minus = jnp.asarray(rho_minus)
     rho_plus = jnp.asarray(rho_plus)
@@ -99,11 +144,25 @@ def prox_i_star_jpm(
     rho_minus: Array,
     rho_plus: Array,
 ) -> tuple[Array, Array, Array]:
+    """Apply ``id - project_jpm`` for the dual ``J±`` term."""
+
     q_pr, rho_minus_pr, rho_plus_pr = project_jpm(graph, q_node, rho_minus, rho_plus)
     return q_node - q_pr, rho_minus - rho_minus_pr, rho_plus - rho_plus_pr
 
 
 def project_javg(rho: Array, rho_bar: Array, rho_a: Array, rho_b: Array) -> tuple[Array, Array]:
+    """Project onto the time-average consistency constraint.
+
+    Args:
+        rho: Node-density path with shape ``(N + 1, X)``.
+        rho_bar: Time-averaged node densities with shape ``(N, X)``.
+        rho_a: Fixed initial density with shape ``(X,)``.
+        rho_b: Fixed terminal density with shape ``(X,)``.
+
+    Returns:
+        A tuple ``(rho_pr, rho_bar_pr)`` satisfying the ``Javg`` relation.
+    """
+
     rho = jnp.asarray(rho)
     rho_bar = jnp.asarray(rho_bar)
     rho_a = jnp.asarray(rho_a)
@@ -120,11 +179,15 @@ def project_javg(rho: Array, rho_bar: Array, rho_a: Array, rho_b: Array) -> tupl
 
 
 def prox_i_star_javg(rho: Array, rho_bar: Array, rho_a: Array, rho_b: Array) -> tuple[Array, Array]:
+    """Apply ``id - project_javg`` for the dual time-average term."""
+
     rho_pr, rho_bar_pr = project_javg(rho, rho_bar, rho_a, rho_b)
     return rho - rho_pr, rho_bar - rho_bar_pr
 
 
 def project_jeq(rho_bar: Array, q_node: Array) -> tuple[Array, Array]:
+    """Project onto the equality constraint ``rho_bar == q_node``."""
+
     rho_bar = jnp.asarray(rho_bar)
     q_node = jnp.asarray(q_node)
     mid = 0.5 * (rho_bar + q_node)
@@ -132,6 +195,8 @@ def project_jeq(rho_bar: Array, q_node: Array) -> tuple[Array, Array]:
 
 
 def _project_k_point(mean_ops: MeanOps, p1: Array, p2: Array, p3: Array) -> Array:
+    """Project one point onto the mean-admissible ``K`` set."""
+
     theta_val = mean_ops.theta(p1, p2)
     inside = (p1 >= 0) & (p2 >= 0) & (p3 >= 0) & (p3 <= theta_val + 1e-12)
 
@@ -169,6 +234,19 @@ def project_k(
     rho_plus: Array,
     vartheta: Array,
 ) -> tuple[Array, Array, Array]:
+    """Project edgewise onto the admissible set defined by the mean function.
+
+    Args:
+        mean_ops: Mean implementation that defines the admissible set.
+        rho_minus: Edge-local source densities with shape ``(N, E)``.
+        rho_plus: Edge-local destination densities with shape ``(N, E)``.
+        vartheta: Mean-related edge variable with shape ``(N, E)``.
+
+    Returns:
+        A tuple ``(rho_minus_pr, rho_plus_pr, vartheta_pr)`` after the
+        pointwise ``K`` projection.
+    """
+
     rho_minus = jnp.asarray(rho_minus)
     rho_plus = jnp.asarray(rho_plus)
     vartheta = jnp.asarray(vartheta)
@@ -186,6 +264,18 @@ def init_split_state(
     rho: Array,
     mean_ops: MeanOps,
 ) -> tuple[Array, Array, Array, Array, Array]:
+    """Derive the auxiliary split variables from a node-density path.
+
+    Args:
+        graph: Sparse reversible graph.
+        rho: Node-density path with shape ``(N + 1, X)``.
+        mean_ops: Mean implementation used to initialize ``vartheta``.
+
+    Returns:
+        A tuple ``(rho_bar, q_node, rho_minus, rho_plus, vartheta)`` suitable
+        for constructing an :class:`jgot.OTState`.
+    """
+
     rho = jnp.asarray(rho)
     rho_bar = avg_time(rho)
     q_node = rho_bar

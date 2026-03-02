@@ -1,3 +1,5 @@
+"""Linear solvers used by the projection operators."""
+
 from __future__ import annotations
 
 import jax
@@ -11,6 +13,22 @@ Array = jax.Array
 
 
 def solve_tridiagonal_javg(rhs: Array, rho: Array, rho_a: Array, rho_b: Array) -> Array:
+    """Solve the time-only tridiagonal system used by ``project_javg``.
+
+    Args:
+        rhs: Right-hand side with a leading time dimension of length ``N``.
+        rho: Current node-density path. Included for interface symmetry with the
+            caller.
+        rho_a: Initial density. Included for interface symmetry with the caller.
+        rho_b: Terminal density. Included for interface symmetry with the
+            caller.
+
+    Returns:
+        The tridiagonal solve result, interpreted by the caller as the
+        Lagrange-multiplier array for the ``Javg`` projection.
+    """
+
+    del rho, rho_a, rho_b
     rhs = jnp.asarray(rhs)
     num_steps = rhs.shape[0]
     diag = jnp.full((num_steps,), 1.5, dtype=rhs.dtype)
@@ -54,6 +72,22 @@ def conjugate_gradient(
     x0: Array | None = None,
     preconditioner=None,
 ) -> tuple[Array, Array, Array]:
+    """Run a small JAX-native conjugate-gradient solve.
+
+    Args:
+        matvec: Linear operator applied to an array shaped like ``b``.
+        b: Right-hand side.
+        max_iters: Maximum number of CG iterations.
+        tol: Residual tolerance for early stopping inside the fixed loop.
+        x0: Optional warm-start iterate.
+        preconditioner: Optional callable applied to the residual before the CG
+            update.
+
+    Returns:
+        A tuple ``(x, residual, iters_used)`` containing the approximate
+        solution, final residual norm, and the number of effective iterations.
+    """
+
     x = jnp.zeros_like(b) if x0 is None else x0
     r = b - matvec(x)
     z = r if preconditioner is None else preconditioner(r)
@@ -107,6 +141,29 @@ def solve_ceh_gauge_fixed(
     x0: Array | None = None,
     preconditioner: str = "jacobi",
 ) -> tuple[Array, Array, Array]:
+    """Solve the gauge-fixed normal equations for the ``CE_h`` projection.
+
+    This routine builds the continuity operator implicitly through
+    ``jax.vjp`` and solves the gauge-fixed normal equations with conjugate
+    gradient.
+
+    Args:
+        graph: Sparse reversible graph.
+        rho: Node-density path with shape ``(N + 1, X)``.
+        m: Edge flux path with shape ``(N, E)``.
+        rho_a: Fixed initial density with shape ``(X,)``.
+        rho_b: Fixed terminal density with shape ``(X,)``.
+        cg_max_iters: Maximum number of CG iterations.
+        cg_tol: Residual tolerance for the CG solve.
+        x0: Optional warm start for the dual potential ``phi``.
+        preconditioner: Preconditioner identifier. ``"jacobi"`` is the only
+            supported value in the current implementation.
+
+    Returns:
+        A tuple ``(phi, residual, iters_used)`` containing the dual potential
+        and the associated CG diagnostics.
+    """
+
     rho = jnp.asarray(rho)
     m = jnp.asarray(m)
     rho_a = jnp.asarray(rho_a)

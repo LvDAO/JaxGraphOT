@@ -1,3 +1,5 @@
+"""Public data containers and configuration types for the dynamic OT solver."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +16,25 @@ Array = jax.Array
 
 @dataclass(frozen=True)
 class GraphSpec:
+    """Sparse reversible graph stored as a directed edge list.
+
+    The solver stores graphs as paired directed edges rather than as a dense
+    matrix. Every directed edge must have an explicit reverse edge recorded by
+    ``rev``. Most users should construct graphs through
+    :meth:`from_undirected_weights` or :meth:`from_directed_rates` instead of
+    instantiating this dataclass manually.
+
+    Attributes:
+        num_nodes: Number of graph nodes.
+        num_edges: Number of directed edges.
+        src: Source node for each directed edge, shape ``(E,)``.
+        dst: Destination node for each directed edge, shape ``(E,)``.
+        rev: Reverse-edge index for each directed edge, shape ``(E,)``.
+        q: Directed edge rates, shape ``(E,)``.
+        pi: Stationary distribution, shape ``(X,)``.
+        out_rate: Outgoing rate sum at each node, shape ``(X,)``.
+    """
+
     num_nodes: int
     num_edges: int
     src: Array
@@ -34,6 +55,30 @@ class GraphSpec:
         atol: float = 1e-12,
         rtol: float = 1e-10,
     ) -> "GraphSpec":
+        """Build a sparse reversible graph from undirected conductances.
+
+        Each entry ``(edge_u[k], edge_v[k], weight[k])`` defines an undirected
+        conductance. The constructor expands the graph into paired directed
+        edges, computes ``pi`` from weighted degree normalization, and returns a
+        graph that is reversible by construction.
+
+        Args:
+            num_nodes: Total number of nodes in the graph.
+            edge_u: Source endpoint for each undirected edge.
+            edge_v: Destination endpoint for each undirected edge.
+            weight: Positive conductance assigned to each undirected edge.
+            atol: Absolute tolerance used by the final invariant checks.
+            rtol: Relative tolerance used by the final invariant checks.
+
+        Returns:
+            A validated :class:`GraphSpec` instance.
+
+        Raises:
+            ValueError: If the inputs are not one-dimensional, have mismatched
+                lengths, contain invalid node ids, contain non-positive weights,
+                contain self-loops, or do not define a connected graph.
+        """
+
         from .graph import build_graph_from_undirected_weights
 
         return build_graph_from_undirected_weights(
@@ -59,6 +104,39 @@ class GraphSpec:
         rtol: float = 1e-10,
         tol_ratio: float = 1e-10,
     ) -> "GraphSpec":
+        """Build a sparse graph from directed rates ``Q(x, y)``.
+
+        The inputs define a directed rate graph through ``src``, ``dst``, and
+        ``q``. If ``pi`` is omitted, the constructor infers the stationary
+        distribution under the reversibility assumption. Every positive edge must
+        have an explicit reverse edge. When reversibility checks are enabled,
+        nonreversible inputs raise ``ValueError``.
+
+        Args:
+            num_nodes: Total number of nodes in the graph.
+            src: Source node for each directed edge.
+            dst: Destination node for each directed edge.
+            q: Positive directed edge rates.
+            pi: Optional stationary distribution. If omitted, it is inferred
+                from the reversible rates.
+            check_reversible: Whether to validate detailed balance and
+                stationarity before returning.
+            atol: Absolute tolerance used by reversibility and stationarity
+                checks.
+            rtol: Relative tolerance used by reversibility and stationarity
+                checks.
+            tol_ratio: Tolerance for cycle-consistency checks during ``pi``
+                inference.
+
+        Returns:
+            A :class:`GraphSpec` built from the directed rates.
+
+        Raises:
+            ValueError: If the arrays are malformed, contain invalid node ids,
+                contain non-positive rates, omit a reverse edge, violate
+                reversibility, or fail the stationary distribution checks.
+        """
+
         from .graph import build_graph_from_directed_rates
 
         return build_graph_from_directed_rates(
@@ -76,6 +154,12 @@ class GraphSpec:
 
 @dataclass(frozen=True)
 class TimeDiscretization:
+    """Time grid for the two-endpoint dynamic OT problem.
+
+    ``num_steps`` is the number of time intervals. Larger values increase the
+    temporal resolution and the computational cost of the solve.
+    """
+
     num_steps: int
 
     def __post_init__(self) -> None:
@@ -84,11 +168,31 @@ class TimeDiscretization:
 
     @property
     def h(self) -> float:
+        """Return the uniform time step size ``1 / num_steps``."""
+
         return 1.0 / float(self.num_steps)
 
 
 @dataclass(frozen=True)
 class OTConfig:
+    """Solver configuration for the PDHG-based dynamic OT solve.
+
+    Parameters are grouped by role:
+
+    - PDHG step sizes: ``tau``, ``sigma``, ``relaxation``
+    - Convergence checks: ``max_iters``, ``check_every``, ``residual_tol``,
+      ``feasibility_tol``
+    - Scalar root-solver controls: ``newton_iters``, ``bisect_iters``
+    - Conjugate-gradient controls: ``cg_max_iters``, ``cg_tol``,
+      ``cg_warm_start``, ``cg_preconditioner``
+    - Warm start policy: ``warm_start``
+
+    Notes:
+        ``tau * sigma`` must remain strictly less than ``1``. ``tol`` is kept
+        only as a backward-compatible alias for ``residual_tol``. The defaults
+        are the intended starting point for normal usage.
+    """
+
     tau: float = 0.95
     sigma: float = 0.95
     relaxation: float = 1.0
@@ -130,6 +234,13 @@ class OTConfig:
 
 @dataclass(frozen=True)
 class OTProblem:
+    """Bundle the inputs for one dynamic OT solve.
+
+    ``rho_a`` and ``rho_b`` are endpoint densities represented with respect to
+    ``graph.pi``. They must each have shape ``(graph.num_nodes,)`` and satisfy
+    ``sum(graph.pi * rho) == 1``.
+    """
+
     graph: GraphSpec
     time: TimeDiscretization
     rho_a: Array
@@ -140,6 +251,22 @@ class OTProblem:
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class OTState:
+    """Full split state used by the time-discrete solver.
+
+    ``rho`` and ``m`` are the primary fields that most users inspect in the
+    returned geodesic state. The remaining arrays are auxiliary split variables
+    used by the PDHG implementation.
+
+    Attributes:
+        rho: Node densities over time, shape ``(N + 1, X)``.
+        m: Edge fluxes over time, shape ``(N, E)``.
+        vartheta: Mean-related edge variables, shape ``(N, E)``.
+        rho_minus: Edge-local source densities, shape ``(N, E)``.
+        rho_plus: Edge-local destination densities, shape ``(N, E)``.
+        rho_bar: Time-averaged node densities, shape ``(N, X)``.
+        q_node: Auxiliary node variables, shape ``(N, X)``.
+    """
+
     rho: Array
     m: Array
     vartheta: Array
@@ -149,6 +276,8 @@ class OTState:
     q_node: Array
 
     def tree_flatten(self):
+        """Return the JAX pytree children for this state."""
+
         children = (
             self.rho,
             self.m,
@@ -162,10 +291,14 @@ class OTState:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Reconstruct the state from JAX pytree children."""
+
         del aux_data
         return cls(*children)
 
     def primal_norm(self) -> Array:
+        """Compute the Euclidean norm across all split state blocks."""
+
         terms = [
             jnp.sum(self.rho**2),
             jnp.sum(self.m**2),
@@ -180,6 +313,14 @@ class OTState:
 
 @dataclass(frozen=True)
 class OTSolution:
+    """Result returned by :func:`jgot.solve_ot`.
+
+    ``distance`` is the square root of ``action``. ``state`` contains the
+    time-discrete geodesic state, ``converged`` indicates whether the solver
+    met its stopping criteria, and ``diagnostics`` stores residuals plus
+    conjugate-gradient statistics from the inner projections.
+    """
+
     distance: Array
     action: Array
     state: OTState

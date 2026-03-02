@@ -1,3 +1,8 @@
+"""Averaging functions used by the transport action and ``K`` projection.
+
+The current implementation provides the logarithmic mean only.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,25 +16,63 @@ Array = jax.Array
 
 
 class MeanOps(Protocol):
-    def theta(self, s: Array, t: Array) -> Array: ...
+    """Abstract interface required by the solver's mean-dependent operations.
 
-    def dtheta_ds(self, s: Array, t: Array) -> Array: ...
+    Most users should use :class:`LogMeanOps`.
+    """
 
-    def dtheta_dt(self, s: Array, t: Array) -> Array: ...
+    def theta(self, s: Array, t: Array) -> Array:
+        """Evaluate the admissible mean."""
 
-    def origin_supergrad_contains(self, z1: Array, z2: Array) -> Array: ...
+        ...
 
-    def project_k_top(self, p1: Array, p2: Array, p3: Array) -> tuple[Array, Array, Array]: ...
+    def dtheta_ds(self, s: Array, t: Array) -> Array:
+        """Differentiate the mean with respect to the first argument."""
+
+        ...
+
+    def dtheta_dt(self, s: Array, t: Array) -> Array:
+        """Differentiate the mean with respect to the second argument."""
+
+        ...
+
+    def origin_supergrad_contains(self, z1: Array, z2: Array) -> Array:
+        """Test the origin supergradient inclusion used by ``project_k``."""
+
+        ...
+
+    def project_k_top(self, p1: Array, p2: Array, p3: Array) -> tuple[Array, Array, Array]:
+        """Project a point onto the upper boundary of the ``K`` set."""
+
+        ...
 
 
 @dataclass(frozen=True)
 class LogMeanOps:
+    """Logarithmic mean and its helper operations for the current solver.
+
+    This implementation includes near-diagonal stabilization for the mean and
+    its derivatives, plus scalar root solves used inside the pointwise ``K``
+    projection.
+    """
+
     eps_diag: float = 1e-6
     xi_max: float = 18.0
     newton_iters: int = 3
     bisect_iters: int = 24
 
     def theta(self, s: Array, t: Array) -> Array:
+        """Evaluate the logarithmic mean ``theta(s, t)``.
+
+        Args:
+            s: First mean argument. Scalars or broadcast-compatible arrays.
+            t: Second mean argument. Scalars or broadcast-compatible arrays.
+
+        Returns:
+            The logarithmic mean with numerically stabilized evaluation near the
+            diagonal and zero output on the non-positive boundary.
+        """
+
         s = jnp.asarray(s)
         t = jnp.asarray(t)
         positive = (s > 0) & (t > 0)
@@ -44,6 +87,17 @@ class LogMeanOps:
         return out
 
     def dtheta_ds(self, s: Array, t: Array) -> Array:
+        """Differentiate the logarithmic mean with respect to ``s``.
+
+        Args:
+            s: First mean argument. Scalars or broadcast-compatible arrays.
+            t: Second mean argument. Scalars or broadcast-compatible arrays.
+
+        Returns:
+            The partial derivative ``d theta / d s`` evaluated with a
+            near-diagonal series expansion when needed for numerical stability.
+        """
+
         s = jnp.asarray(s)
         t = jnp.asarray(t)
         positive = (s > 0) & (t > 0)
@@ -63,6 +117,17 @@ class LogMeanOps:
         return out
 
     def dtheta_dt(self, s: Array, t: Array) -> Array:
+        """Differentiate the logarithmic mean with respect to ``t``.
+
+        Args:
+            s: First mean argument. Scalars or broadcast-compatible arrays.
+            t: Second mean argument. Scalars or broadcast-compatible arrays.
+
+        Returns:
+            The partial derivative ``d theta / d t`` evaluated with the same
+            near-diagonal stabilization used for :meth:`dtheta_ds`.
+        """
+
         s = jnp.asarray(s)
         t = jnp.asarray(t)
         positive = (s > 0) & (t > 0)
@@ -82,11 +147,19 @@ class LogMeanOps:
         return out
 
     def _beta(self, xi: Array) -> Array:
+        """Evaluate the monotone scalar map inverted in the origin test."""
+
         s = jnp.exp(-0.5 * xi)
         t = jnp.exp(0.5 * xi)
         return self.dtheta_ds(s, t)
 
     def _invert_beta(self, target: Array) -> tuple[Array, Array]:
+        """Invert ``_beta`` on a bounded interval using safeguarded root steps.
+
+        Returns the approximate root in log-space together with a flag that
+        indicates whether the target lay inside the search bracket.
+        """
+
         lo = jnp.array(0.0, dtype=target.dtype)
         hi = jnp.array(self.xi_max, dtype=target.dtype)
         f_lo = self._beta(lo) - target
@@ -125,6 +198,8 @@ class LogMeanOps:
         return 0.5 * (left + right), in_range
 
     def _top_surface_residual(self, p: Array, xi: Array) -> Array:
+        """Return the scalar root residual for the ``K`` top-surface projection."""
+
         s = jnp.exp(0.5 * xi)
         t = jnp.exp(-0.5 * xi)
         w = jnp.asarray([s, t, self.theta(s, t)], dtype=p.dtype)
@@ -135,6 +210,17 @@ class LogMeanOps:
         return jnp.dot(p, jnp.cross(w, n))
 
     def origin_supergrad_contains(self, z1: Array, z2: Array) -> Array:
+        """Check the origin supergradient condition used by ``project_k``.
+
+        Args:
+            z1: First normalized slope component.
+            z2: Second normalized slope component.
+
+        Returns:
+            A boolean-valued JAX array indicating whether the point lies in the
+            origin supergradient of the logarithmic mean admissible set.
+        """
+
         z1 = jnp.asarray(z1)
         z2 = jnp.asarray(z2)
         swap = z1 < z2
@@ -149,6 +235,18 @@ class LogMeanOps:
         return positive & in_range & (secondary >= needed - 1e-12)
 
     def project_k_top(self, p1: Array, p2: Array, p3: Array) -> tuple[Array, Array, Array]:
+        """Project a point onto the upper boundary of the ``K`` admissible set.
+
+        Args:
+            p1: First coordinate of the point to project.
+            p2: Second coordinate of the point to project.
+            p3: Third coordinate of the point to project.
+
+        Returns:
+            A tuple ``(q1, q2, q3)`` lying on the top surface defined by the
+            logarithmic mean.
+        """
+
         p = jnp.asarray([p1, p2, p3])
         lo0 = jnp.array(-self.xi_max, dtype=p.dtype)
         hi0 = jnp.array(self.xi_max, dtype=p.dtype)

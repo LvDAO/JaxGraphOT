@@ -1,3 +1,5 @@
+"""PDHG iteration for the split dynamic OT problem."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,28 +25,50 @@ Array = jax.Array
 
 
 def _tree_map(fn, *trees):
+    """Apply ``jax.tree_map`` to one or more matching pytrees."""
+
     return jax.tree_util.tree_map(fn, *trees)
 
 
 def _state_add(left: OTState, right: OTState) -> OTState:
+    """Add two split states blockwise."""
+
     return _tree_map(lambda a, b: a + b, left, right)
 
 
 def _state_sub(left: OTState, right: OTState) -> OTState:
+    """Subtract two split states blockwise."""
+
     return _tree_map(lambda a, b: a - b, left, right)
 
 
 def _state_scale(state: OTState, scale: float | Array) -> OTState:
+    """Scale every block in a split state by a scalar."""
+
     return _tree_map(lambda x: scale * x, state)
 
 
 def _state_norm(state: OTState) -> Array:
+    """Compute the Euclidean norm across all split-state blocks."""
+
     return jnp.sqrt(sum(jnp.sum(arr * arr) for arr in jax.tree_util.tree_leaves(state)))
 
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class PDHGCarry:
+    """Loop carry for the JAX ``while_loop`` PDHG iteration.
+
+    Attributes:
+        primal: Current primal split state.
+        dual: Current dual split state.
+        primal_bar: Over-relaxed primal state used by PDHG.
+        phi_cache: Cached dual potential for warm-starting ``project_ceh``.
+        iterations_used: Number of completed PDHG iterations.
+        converged: Boolean-valued JAX array tracking the stopping rule.
+        diagnostics: Latest residual and inner-solver diagnostics.
+    """
+
     primal: OTState
     dual: OTState
     primal_bar: OTState
@@ -54,6 +78,8 @@ class PDHGCarry:
     diagnostics: dict[str, Array]
 
     def tree_flatten(self):
+        """Return the JAX pytree children for the PDHG loop carry."""
+
         children = (
             self.primal,
             self.dual,
@@ -67,6 +93,8 @@ class PDHGCarry:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Reconstruct the PDHG loop carry from JAX pytree children."""
+
         del aux_data
         return cls(*children)
 
@@ -78,6 +106,20 @@ def initialize_state(
     mean_ops: MeanOps,
     num_steps: int,
 ) -> OTState:
+    """Initialize the primal state by linear interpolation in node densities.
+
+    Args:
+        graph: Sparse reversible graph.
+        rho_a: Initial density with shape ``(X,)``.
+        rho_b: Terminal density with shape ``(X,)``.
+        mean_ops: Mean implementation used for the auxiliary variables.
+        num_steps: Number of time intervals ``N``.
+
+    Returns:
+        An :class:`OTState` with linearly interpolated ``rho`` and zero initial
+        edge flux.
+    """
+
     alpha = jnp.linspace(0.0, 1.0, num_steps + 1, dtype=rho_a.dtype)[:, None]
     rho = (1.0 - alpha) * rho_a[None, :] + alpha * rho_b[None, :]
     rho_bar, q_node, rho_minus, rho_plus, vartheta = init_split_state(graph, rho, mean_ops)
@@ -100,6 +142,8 @@ def prox_f_star(
     rho_b: Array,
     config: OTConfig,
 ) -> OTState:
+    """Apply the dual proximal step for the ``F*`` split term."""
+
     vartheta, m = prox_a_star(state.vartheta, state.m, newton_iters=config.newton_iters)
     q_node, rho_minus, rho_plus = prox_i_star_jpm(
         graph,
@@ -128,6 +172,13 @@ def prox_g(
     config: OTConfig,
     phi0: Array | None = None,
 ) -> tuple[OTState, Array, dict[str, Array]]:
+    """Apply the primal projection step for the ``G`` split term.
+
+    Returns:
+        A tuple ``(state, phi, ceh_stats)`` containing the updated primal state,
+        the cached ``CE_h`` dual potential, and the associated CG diagnostics.
+    """
+
     rho, m, phi, cg_residual, cg_iters = project_ceh(
         graph,
         state.rho,
@@ -170,6 +221,14 @@ def compute_diagnostics(
     mean_ops: MeanOps,
     ceh_stats: dict[str, Array],
 ) -> dict[str, Array]:
+    """Compute the residual metrics used by the PDHG stopping rule.
+
+    Returns:
+        A dictionary containing primal and dual deltas, continuity residual,
+        ``K``-set violation, endpoint residual, the combined constraint
+        residual, and the latest ``CE_h`` CG diagnostics.
+    """
+
     primal_delta = _state_norm(_state_sub(primal, prev_primal)) / (1.0 + _state_norm(prev_primal))
     dual_num = jnp.sqrt(
         jnp.sum((dual.m - prev_dual.m) ** 2) + jnp.sum((dual.vartheta - prev_dual.vartheta) ** 2)
@@ -209,6 +268,8 @@ def compute_diagnostics(
 
 
 def _zero_state_like(state: OTState) -> OTState:
+    """Allocate a zero-valued split state with the same shapes as ``state``."""
+
     return OTState(
         rho=jnp.zeros_like(state.rho),
         m=jnp.zeros_like(state.m),
@@ -230,6 +291,24 @@ def run_pdhg(
     *,
     initial_primal: OTState | None = None,
 ) -> tuple[OTState, dict[str, Array], Array, Array]:
+    """Run the PDHG iteration for the split dynamic OT problem.
+
+    Args:
+        graph: Sparse reversible graph.
+        rho_a: Initial density with shape ``(X,)``.
+        rho_b: Terminal density with shape ``(X,)``.
+        mean_ops: Mean implementation used in the ``K`` projection.
+        num_steps: Number of time intervals ``N``.
+        config: Solver configuration, including stopping thresholds.
+        initial_primal: Optional warm-start primal state. If omitted, the
+            routine uses :func:`initialize_state`.
+
+    Returns:
+        A tuple ``(state, diagnostics, iterations_used, converged)`` containing
+        the final primal state, latest diagnostics, the exact iteration count,
+        and the JAX boolean convergence flag.
+    """
+
     if initial_primal is None:
         init = initialize_state(graph, rho_a, rho_b, mean_ops, num_steps)
     else:
