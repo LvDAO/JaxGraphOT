@@ -22,7 +22,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-latest
+          - macos-14
         python-version:
           - "3.13"
     steps:
@@ -46,7 +46,20 @@ jobs:
         run: uv run ruff check .
 
       - name: Test
-        run: uv run pytest -q
+        env:
+          OMP_NUM_THREADS: "1"
+          XLA_FLAGS: --xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1
+        run: |
+          uv run python - <<'PY'
+          import os
+          import sys
+          import pytest
+
+          code = pytest.main(["-q"])
+          sys.stdout.flush()
+          sys.stderr.flush()
+          os._exit(int(code))
+          PY
 
   build:
     name: Build Distribution
