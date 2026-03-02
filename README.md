@@ -2,7 +2,7 @@
 
 Dynamic optimal transport on sparse reversible graphs in JAX. `jgot` currently
 solves the two-endpoint dynamic optimal transport problem on finite reversible
-graphs, following the time-discrete formulation of Erbar et al. (2020). JKO /
+graphs, following the time-discrete formulation of [Erbar et al. (2020)](https://arxiv.org/abs/1707.06859). JKO /
 minimizing-movement wrappers are out of scope in the current implementation.
 
 ## What You Provide
