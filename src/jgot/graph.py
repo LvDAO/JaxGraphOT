@@ -258,6 +258,11 @@ def build_graph_from_undirected_weights(
 ) -> GraphSpec:
     """Construct a validated graph from undirected conductances.
 
+    This helper computes weighted degrees, derives ``pi`` from those degrees,
+    and normalizes the off-diagonal edge weights by row sum. The returned
+    ``GraphSpec`` therefore stores the off-diagonal part of a unit-exit-rate
+    reversible jump process.
+
     Args:
         num_nodes: Total number of nodes in the graph.
         edge_u: First endpoint of each undirected edge.

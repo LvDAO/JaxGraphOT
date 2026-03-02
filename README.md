@@ -38,19 +38,6 @@ Runtime assumptions:
 - Current development target is macOS
 - The package uses CPU-backed JAX
 
-## CI
-
-GitHub Actions validates every push and every pull request targeting `main`.
-
-The CI workflow runs:
-
-- `uv run ruff check .`
-- `uv run pytest -q`
-- `uv build`
-
-Validation runs on Linux and macOS. Successful runs upload the built wheel and
-source distribution from `dist/` as workflow artifacts.
-
 ## Quickstart
 
 This is the smallest complete solve.

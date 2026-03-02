@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -29,17 +31,36 @@ def test_from_directed_rates_infers_stationary_distribution() -> None:
     np.testing.assert_allclose(np.asarray(inferred.pi), np.asarray(base.pi), atol=1e-12)
 
 
+def test_undirected_constructor_docstring_mentions_unit_exit_rate() -> None:
+    doc = inspect.getdoc(GraphSpec.from_undirected_weights)
+    assert doc is not None
+    assert "unit-exit-rate random walk" in doc
+
+
+def test_from_undirected_weights_normalizes_each_row_sum_to_one() -> None:
+    graph = GraphSpec.from_undirected_weights(4, [0, 1, 2], [1, 2, 3], [1.0, 2.0, 1.5])
+    row_sum = np.zeros(graph.num_nodes, dtype=np.float64)
+    np.add.at(row_sum, np.asarray(graph.src), np.asarray(graph.q))
+    np.testing.assert_allclose(row_sum, np.ones(graph.num_nodes), atol=1e-12)
+
+
+def test_directed_reversible_example_infers_expected_stationary_distribution() -> None:
+    graph = GraphSpec.from_directed_rates(
+        3,
+        src=[0, 1, 1, 2],
+        dst=[1, 0, 2, 1],
+        q=[2.0, 1.0, 1.0, 2.0],
+    )
+    np.testing.assert_allclose(np.asarray(graph.pi), np.array([0.25, 0.5, 0.25]), atol=1e-12)
+
+
 def test_missing_reverse_edge_is_rejected() -> None:
     with pytest.raises(ValueError, match="missing reverse edge"):
         GraphSpec.from_directed_rates(2, [0], [1], [1.0])
 
-
-
 def test_disconnected_graph_is_rejected() -> None:
     with pytest.raises(ValueError, match="connected"):
         GraphSpec.from_undirected_weights(3, [0], [1], [1.0])
-
-
 
 def test_nonreversible_rates_are_rejected() -> None:
     src = [0, 1, 1, 2, 2, 0]

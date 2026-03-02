@@ -22,7 +22,9 @@ class GraphSpec:
     matrix. Every directed edge must have an explicit reverse edge recorded by
     ``rev``. Most users should construct graphs through
     :meth:`from_undirected_weights` or :meth:`from_directed_rates` instead of
-    instantiating this dataclass manually.
+    instantiating this dataclass manually. Graphs built from symmetric weights
+    are internally converted into a normalized reversible directed edge
+    representation.
 
     Attributes:
         num_nodes: Number of graph nodes.
@@ -77,6 +79,17 @@ class GraphSpec:
             ValueError: If the inputs are not one-dimensional, have mismatched
                 lengths, contain invalid node ids, contain non-positive weights,
                 contain self-loops, or do not define a connected graph.
+
+        Notes:
+            The symmetric input is interpreted as a conductance graph, not as a
+            pre-built generator. The constructor computes the weighted degree
+            ``d_x = sum_y w_xy`` and stores off-diagonal edge weights as
+            ``q(x, y) = w_xy / d_x``. As a result, ``sum_{y != x} q(x, y) = 1``
+            for every node, so the undirected constructor builds a
+            unit-exit-rate random walk. If interpreted as a full generator, the
+            implied diagonal would be ``-1`` at every node. This normalization
+            is specific to :meth:`from_undirected_weights`; it is not a generic
+            property of graphs built from directed rates.
         """
 
         from .graph import build_graph_from_undirected_weights
