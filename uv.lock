@@ -134,33 +134,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jax-graph-ot"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "jax" },
-    { name = "matplotlib" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "jax", specifier = ">=0.8,<0.9" },
-    { name = "matplotlib", specifier = ">=3.10" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "ruff", specifier = ">=0.12" },
-]
-
-[[package]]
 name = "jaxlib"
 version = "0.8.3"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
@@ -184,6 +157,33 @@ wheels = [
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/eb/dd/498b9758c650fa26a657dec2184f1dec57d3719fbdf7f22de02163c6645d/jaxlib-0.8.3-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:4be4273edeb2cc75c409e446fd4f59a63d2e14f1311e714a978b5fa67ac16b70", size = 56037532, upload-time = "2026-01-29T22:52:27.683Z" },
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/65/a7/974a45b163e132d7ea7363f8486ecb3f9c9f42cca87ca40458fe4b1f64e6/jaxlib-0.8.3-cp314-cp314t-manylinux_2_27_aarch64.whl", hash = "sha256:be237754eead89788264e112b2b5c722ab2a941406d19f1a8da6bf48bfde0bf2", size = 74662102, upload-time = "2026-01-29T22:52:31.883Z" },
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/e8/9d/c1a441b9f3121920b01b522954267e63102631d91d6b1902449e4e757490/jaxlib-0.8.3-cp314-cp314t-manylinux_2_27_x86_64.whl", hash = "sha256:fe490fe3d81b02d21aaf936475fc4f47171473599e9d3907f6be0823ec4321bb", size = 80239633, upload-time = "2026-01-29T22:52:37.32Z" },
+]
+
+[[package]]
+name = "jgot"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "jax" },
+    { name = "matplotlib" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jax", specifier = ">=0.8,<0.9" },
+    { name = "matplotlib", specifier = ">=3.10" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "ruff", specifier = ">=0.12" },
 ]
 
 [[package]]

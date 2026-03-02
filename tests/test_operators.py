@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from jax_graph_ot import GraphSpec
-from jax_graph_ot.operators import avg_time, continuity_residual, div, grad, laplace
+from jgot import GraphSpec
+from jgot.operators import avg_time, continuity_residual, div, grad, laplace
 
 
 def _two_node_graph() -> GraphSpec:

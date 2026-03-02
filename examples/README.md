@@ -4,7 +4,7 @@ This folder contains runnable reproductions of the paper's small benchmark setup
 
 Important:
 - These scripts reproduce the problem setups from the paper.
-- They run the repository's current active solver in `jax_graph_ot.solve_ot`.
+- They run the repository's current active solver in `jgot.solve_ot`.
 - The current active solver is the sparse PDHG implementation in `pdhg.py`.
 - The old linear-path construction is no longer the public solve path; it is only used as an internal warm-start.
 

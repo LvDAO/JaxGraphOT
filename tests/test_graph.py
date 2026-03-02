@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jax_graph_ot import GraphSpec
+from jgot import GraphSpec
 
 
 def test_from_undirected_weights_builds_reversible_graph() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from jax_graph_ot import (
+from jgot import (
     GraphSpec,
     LogMeanOps,
     OTConfig,

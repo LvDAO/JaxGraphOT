@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from jax_graph_ot import LogMeanOps
+from jgot import LogMeanOps
 
 
 def test_log_mean_defaults_to_float64() -> None:

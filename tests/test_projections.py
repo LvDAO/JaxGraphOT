@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from jax_graph_ot import GraphSpec, LogMeanOps
-from jax_graph_ot.operators import continuity_residual
-from jax_graph_ot.projections import (
+from jgot import GraphSpec, LogMeanOps
+from jgot.operators import continuity_residual
+from jgot.projections import (
     project_ceh,
     project_javg,
     project_jeq,

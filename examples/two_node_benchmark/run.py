@@ -38,7 +38,7 @@ def main() -> None:
         solve_problem,
         summarize_solution,
     )
-    from jax_graph_ot import GraphSpec
+    from jgot import GraphSpec
 
     parser = argparse.ArgumentParser(description="Run the 2-node benchmark from the paper.")
     parser.add_argument("--alpha", type=float, default=-0.3)

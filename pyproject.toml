@@ -1,5 +1,5 @@
 [project]
-name = "jax-graph-ot"
+name = "jgot"
 version = "0.1.0"
 description = "Dynamic optimal transport on sparse reversible graphs in JAX"
 readme = "README.md"
@@ -20,7 +20,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jax_graph_ot"]
+packages = ["src/jgot"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

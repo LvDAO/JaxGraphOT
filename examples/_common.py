@@ -9,7 +9,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from jax_graph_ot import GraphSpec, LogMeanOps, OTConfig, OTProblem, TimeDiscretization, solve_ot
+from jgot import GraphSpec, LogMeanOps, OTConfig, OTProblem, TimeDiscretization, solve_ot
 
 DEFAULT_CONFIG = OTConfig(max_iters=800, check_every=20, cg_max_iters=128)
 
