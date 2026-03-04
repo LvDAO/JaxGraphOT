@@ -31,3 +31,6 @@ Each script saves:
   - nodes and edges in the graph geometry
   - node area proportional to density
   - edge width proportional to flow magnitude
+
+For detailed example explanations and debug-trace usage, see
+[`docs/examples-guide.md`](../docs/examples-guide.md).

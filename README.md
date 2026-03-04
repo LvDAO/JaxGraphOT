@@ -38,6 +38,17 @@ Runtime assumptions:
 - Current development target is macOS
 - The package uses CPU-backed JAX
 
+## Documentation
+
+Detailed project documentation lives under [`docs/`](docs/index.md).
+
+Recommended entry points:
+
+- [`docs/index.md`](docs/index.md)
+- [`docs/getting-started.md`](docs/getting-started.md)
+- [`docs/graph-model.md`](docs/graph-model.md)
+- [`docs/debugging-and-diagnostics.md`](docs/debugging-and-diagnostics.md)
+
 ## Quickstart
 
 This is the smallest complete solve.
