@@ -164,6 +164,73 @@ def save_solution(output_dir: Path, name: str, solution) -> Path:
     return path
 
 
+def save_debug_trace_npz(output_dir: Path, name: str, debug_trace) -> Path:
+    output_dir = ensure_output_dir(output_dir)
+    path = output_dir / f"{name}_debug_trace.npz"
+    num_records = int(debug_trace.num_records)
+    np.savez(
+        path,
+        iterations=np.asarray(debug_trace.iterations),
+        action=np.asarray(debug_trace.action),
+        continuity_residual=np.asarray(debug_trace.continuity_residual),
+        primal_delta=np.asarray(debug_trace.primal_delta),
+        dual_delta=np.asarray(debug_trace.dual_delta),
+        max_constraint_residual=np.asarray(debug_trace.max_constraint_residual),
+        ceh_cg_residual=np.asarray(debug_trace.ceh_cg_residual),
+        ceh_cg_iters=np.asarray(debug_trace.ceh_cg_iters),
+        min_vartheta=np.asarray(debug_trace.min_vartheta),
+        num_records=np.asarray(num_records, dtype=np.int32),
+    )
+    return path
+
+
+def save_debug_trace_plot(output_dir: Path, name: str, debug_trace, *, title: str) -> Path:
+    output_dir = ensure_output_dir(output_dir)
+    path = output_dir / f"{name}_debug_trace.png"
+    num_records = int(debug_trace.num_records)
+    iterations = np.asarray(debug_trace.iterations)[:num_records]
+    action = np.asarray(debug_trace.action)[:num_records]
+    continuity = np.asarray(debug_trace.continuity_residual)[:num_records]
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6.5), sharex=True)
+    if num_records == 0:
+        for ax in axes:
+            ax.axis("off")
+        fig.suptitle(title)
+        axes[0].text(
+            0.5,
+            0.5,
+            "no trace records",
+            ha="center",
+            va="center",
+            transform=axes[0].transAxes,
+        )
+        fig.tight_layout()
+        fig.savefig(path, dpi=160)
+        plt.close(fig)
+        return path
+
+    axes[0].plot(iterations, action, marker="o", linewidth=2.0, markersize=4.0)
+    axes[0].set_ylabel("action")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].set_title("Action")
+
+    axes[1].plot(iterations, continuity, marker="o", linewidth=2.0, markersize=4.0)
+    continuity_positive = np.isfinite(continuity) & (continuity > 0.0)
+    if np.all(continuity_positive):
+        axes[1].set_yscale("log")
+    axes[1].set_ylabel("continuity residual")
+    axes[1].set_xlabel("PDHG iteration")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].set_title("Continuity Residual")
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    return path
+
+
 def summarize_solution(label: str, solution) -> str:
     diagnostics = {k: float(v) for k, v in solution.diagnostics.items()}
     return (

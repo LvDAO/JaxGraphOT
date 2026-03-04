@@ -145,7 +145,10 @@ def solve_ceh_gauge_fixed(
 
     This routine builds the continuity operator implicitly through
     ``jax.vjp`` and solves the gauge-fixed normal equations with conjugate
-    gradient.
+    gradient. The paper formulates this projection in weighted norms on nodes
+    and edges; the current implementation instead works with a Euclideanized
+    residual map, which is convenient for JAX but can change conditioning on
+    larger graph instances.
 
     Args:
         graph: Sparse reversible graph.

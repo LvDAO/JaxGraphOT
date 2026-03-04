@@ -199,6 +199,7 @@ class OTConfig:
     - Conjugate-gradient controls: ``cg_max_iters``, ``cg_tol``,
       ``cg_warm_start``, ``cg_preconditioner``
     - Warm start policy: ``warm_start``
+    - Optional checkpoint tracing: ``record_debug_trace``
 
     Notes:
         ``tau * sigma`` must remain strictly less than ``1``. ``tol`` is kept
@@ -221,6 +222,7 @@ class OTConfig:
     cg_tol: float = 1e-10
     cg_warm_start: bool = True
     cg_preconditioner: str = "jacobi"
+    record_debug_trace: bool = False
 
     def __post_init__(self) -> None:
         if self.tau <= 0 or self.sigma <= 0:
@@ -325,13 +327,35 @@ class OTState:
 
 
 @dataclass(frozen=True)
+class OTDebugTrace:
+    """Checkpointed diagnostic trace recorded during a PDHG solve.
+
+    The arrays are fixed-size buffers allocated from ``max_iters`` and
+    ``check_every``. Only the first ``num_records`` entries are valid.
+    """
+
+    iterations: Array
+    action: Array
+    continuity_residual: Array
+    primal_delta: Array
+    dual_delta: Array
+    max_constraint_residual: Array
+    ceh_cg_residual: Array
+    ceh_cg_iters: Array
+    min_vartheta: Array
+    num_records: int
+
+
+@dataclass(frozen=True)
 class OTSolution:
     """Result returned by :func:`jgot.solve_ot`.
 
     ``distance`` is the square root of ``action``. ``state`` contains the
     time-discrete geodesic state, ``converged`` indicates whether the solver
     met its stopping criteria, and ``diagnostics`` stores residuals plus
-    conjugate-gradient statistics from the inner projections.
+    conjugate-gradient statistics from the inner projections. When enabled via
+    :class:`OTConfig`, ``debug_trace`` stores checkpointed JIT-safe debug
+    history for diagnosing convergence behavior.
     """
 
     distance: Array
@@ -340,3 +364,4 @@ class OTSolution:
     iterations_used: int
     converged: bool
     diagnostics: dict[str, Array]
+    debug_trace: OTDebugTrace | None = None

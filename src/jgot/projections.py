@@ -245,6 +245,12 @@ def project_k(
     Returns:
         A tuple ``(rho_minus_pr, rho_plus_pr, vartheta_pr)`` after the
         pointwise ``K`` projection.
+
+    Notes:
+        The paper treats this as an exact pointwise Euclidean projection. The
+        current implementation uses fixed-iteration scalar root solves through
+        :class:`jgot.LogMeanOps`, which is practical for JAX but can introduce
+        drift near the singular boundary on larger problems.
     """
 
     rho_minus = jnp.asarray(rho_minus)

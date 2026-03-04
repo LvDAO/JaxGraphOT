@@ -115,3 +115,60 @@ def test_four_cycle_keeps_long_path_mass_small() -> None:
     midpoint = np.asarray(solution.state.rho)[problem.time.num_steps // 2]
     assert midpoint[2] + midpoint[3] < 1e-2
     assert float(solution.diagnostics["continuity_residual"]) < 1e-8
+
+
+def test_solver_returns_debug_trace_when_enabled() -> None:
+    problem = _two_node_problem(-0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=20, check_every=5, cg_max_iters=64, record_debug_trace=True),
+    )
+    trace = solution.debug_trace
+    assert trace is not None
+    assert trace.num_records > 0
+    lengths = {
+        len(np.asarray(trace.iterations)),
+        len(np.asarray(trace.action)),
+        len(np.asarray(trace.continuity_residual)),
+        len(np.asarray(trace.primal_delta)),
+        len(np.asarray(trace.dual_delta)),
+        len(np.asarray(trace.max_constraint_residual)),
+        len(np.asarray(trace.ceh_cg_residual)),
+        len(np.asarray(trace.ceh_cg_iters)),
+        len(np.asarray(trace.min_vartheta)),
+    }
+    assert len(lengths) == 1
+    valid_iterations = np.asarray(trace.iterations)[: trace.num_records]
+    assert np.all(np.diff(valid_iterations) > 0)
+
+
+def test_solver_omits_debug_trace_when_disabled() -> None:
+    problem = _two_node_problem(-0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=20, check_every=5, cg_max_iters=64, record_debug_trace=False),
+    )
+    assert solution.debug_trace is None
+
+
+def test_debug_trace_records_action_and_continuity() -> None:
+    problem = _two_node_problem(-0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=20, check_every=5, cg_max_iters=64, record_debug_trace=True),
+    )
+    trace = solution.debug_trace
+    assert trace is not None
+    action = np.asarray(trace.action)[: trace.num_records]
+    continuity = np.asarray(trace.continuity_residual)[: trace.num_records]
+    assert action.shape == continuity.shape
+    assert np.all(np.isfinite(continuity))
+
+
+def test_debug_trace_path_still_runs_under_jit() -> None:
+    problem = _two_node_problem(-0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=20, check_every=5, cg_max_iters=64, record_debug_trace=True),
+    )
+    assert solution.debug_trace is not None

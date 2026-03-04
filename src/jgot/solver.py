@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from .pdhg import initialize_state, run_pdhg
 from .projections import init_split_state, project_ceh
-from .types import OTConfig, OTProblem, OTSolution, OTState
+from .types import OTConfig, OTDebugTrace, OTProblem, OTSolution, OTState
 
 Array = jax.Array
 
@@ -107,6 +107,23 @@ def _build_linear_warm_start(problem: OTProblem, config: OTConfig) -> OTState:
     )
 
 
+def _wrap_debug_trace(trace_payload: dict[str, Array]) -> OTDebugTrace:
+    """Convert raw JAX checkpoint buffers into the public debug-trace type."""
+
+    return OTDebugTrace(
+        iterations=trace_payload["iterations"],
+        action=trace_payload["action"],
+        continuity_residual=trace_payload["continuity_residual"],
+        primal_delta=trace_payload["primal_delta"],
+        dual_delta=trace_payload["dual_delta"],
+        max_constraint_residual=trace_payload["max_constraint_residual"],
+        ceh_cg_residual=trace_payload["ceh_cg_residual"],
+        ceh_cg_iters=trace_payload["ceh_cg_iters"],
+        min_vartheta=trace_payload["min_vartheta"],
+        num_records=int(trace_payload["num_records"]),
+    )
+
+
 def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
     """Solve the two-endpoint dynamic OT problem on a sparse reversible graph.
 
@@ -152,6 +169,20 @@ def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
             "ceh_cg_residual": zero,
             "ceh_cg_iters": jnp.array(0, dtype=jnp.int32),
         }
+        debug_trace = None
+        if config.record_debug_trace:
+            debug_trace = OTDebugTrace(
+                iterations=jnp.array([1], dtype=jnp.int32),
+                action=jnp.array([0.0], dtype=rho_a.dtype),
+                continuity_residual=jnp.array([0.0], dtype=rho_a.dtype),
+                primal_delta=jnp.array([0.0], dtype=rho_a.dtype),
+                dual_delta=jnp.array([0.0], dtype=rho_a.dtype),
+                max_constraint_residual=jnp.array([0.0], dtype=rho_a.dtype),
+                ceh_cg_residual=jnp.array([0.0], dtype=rho_a.dtype),
+                ceh_cg_iters=jnp.array([0], dtype=jnp.int32),
+                min_vartheta=jnp.array([jnp.min(state.vartheta)], dtype=rho_a.dtype),
+                num_records=1,
+            )
         return OTSolution(
             distance=zero,
             action=zero,
@@ -159,6 +190,7 @@ def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
             iterations_used=1,
             converged=True,
             diagnostics=diagnostics,
+            debug_trace=debug_trace,
         )
 
     if config.warm_start == "linear_path":
@@ -174,7 +206,7 @@ def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
 
     @jax.jit
     def _solve_kernel(primal0: OTState):
-        state, diagnostics, iterations_used, converged = run_pdhg(
+        state, diagnostics, iterations_used, converged, trace_payload = run_pdhg(
             problem.graph,
             rho_a,
             rho_b,
@@ -184,15 +216,18 @@ def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
             initial_primal=primal0,
         )
         action = compute_action(problem, state)
-        return state, diagnostics, iterations_used, converged, action
+        return state, diagnostics, iterations_used, converged, action, trace_payload
 
-    state, diagnostics, iterations_used, converged, action = _solve_kernel(initial_primal)
+    state, diagnostics, iterations_used, converged, action, trace_payload = _solve_kernel(
+        initial_primal
+    )
     distance = jnp.sqrt(jnp.maximum(action, 0.0))
     converged_flag = bool(
         converged
         & jnp.isfinite(action)
         & (diagnostics["max_constraint_residual"] <= config.feasibility_tol)
     )
+    debug_trace = _wrap_debug_trace(trace_payload) if config.record_debug_trace else None
     return OTSolution(
         distance=distance,
         action=action,
@@ -200,4 +235,5 @@ def solve_ot(problem: OTProblem, config: OTConfig = OTConfig()) -> OTSolution:
         iterations_used=int(iterations_used),
         converged=converged_flag,
         diagnostics=diagnostics,
+        debug_trace=debug_trace,
     )

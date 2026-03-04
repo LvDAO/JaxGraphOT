@@ -29,3 +29,5 @@ dist/
 # Example-generated outputs
 examples/output/
 examples/*/output/
+
+reference/

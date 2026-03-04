@@ -54,6 +54,22 @@ def _state_norm(state: OTState) -> Array:
     return jnp.sqrt(sum(jnp.sum(arr * arr) for arr in jax.tree_util.tree_leaves(state)))
 
 
+def _compute_action_from_state(graph: GraphSpec, h: float, state: OTState) -> Array:
+    """Compute the discrete action directly from a split state.
+
+    This mirrors :func:`jgot.solver.compute_action` so the PDHG loop can record
+    checkpointed action values without leaving the JIT-compiled path.
+    """
+
+    weights = 0.5 * h * graph.q[None, :] * graph.pi[graph.src][None, :]
+    safe = jnp.where(
+        state.vartheta > 0,
+        (state.m * state.m) / state.vartheta,
+        jnp.where(jnp.abs(state.m) <= 1e-12, 0.0, jnp.inf),
+    )
+    return jnp.sum(weights * safe)
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class PDHGCarry:
@@ -67,6 +83,7 @@ class PDHGCarry:
         iterations_used: Number of completed PDHG iterations.
         converged: Boolean-valued JAX array tracking the stopping rule.
         diagnostics: Latest residual and inner-solver diagnostics.
+        history_*: Fixed-size checkpoint buffers used for optional debug traces.
     """
 
     primal: OTState
@@ -76,6 +93,16 @@ class PDHGCarry:
     iterations_used: Array
     converged: Array
     diagnostics: dict[str, Array]
+    history_iterations: Array
+    history_action: Array
+    history_continuity: Array
+    history_primal_delta: Array
+    history_dual_delta: Array
+    history_max_constraint: Array
+    history_ceh_cg_residual: Array
+    history_ceh_cg_iters: Array
+    history_min_vartheta: Array
+    history_count: Array
 
     def tree_flatten(self):
         """Return the JAX pytree children for the PDHG loop carry."""
@@ -88,6 +115,16 @@ class PDHGCarry:
             self.iterations_used,
             self.converged,
             self.diagnostics,
+            self.history_iterations,
+            self.history_action,
+            self.history_continuity,
+            self.history_primal_delta,
+            self.history_dual_delta,
+            self.history_max_constraint,
+            self.history_ceh_cg_residual,
+            self.history_ceh_cg_iters,
+            self.history_min_vartheta,
+            self.history_count,
         )
         return children, None
 
@@ -290,7 +327,7 @@ def run_pdhg(
     config: OTConfig,
     *,
     initial_primal: OTState | None = None,
-) -> tuple[OTState, dict[str, Array], Array, Array]:
+) -> tuple[OTState, dict[str, Array], Array, Array, dict[str, Array]]:
     """Run the PDHG iteration for the split dynamic OT problem.
 
     Args:
@@ -304,9 +341,10 @@ def run_pdhg(
             routine uses :func:`initialize_state`.
 
     Returns:
-        A tuple ``(state, diagnostics, iterations_used, converged)`` containing
-        the final primal state, latest diagnostics, the exact iteration count,
-        and the JAX boolean convergence flag.
+        A tuple ``(state, diagnostics, iterations_used, converged,
+        trace_payload)`` containing the final primal state, latest diagnostics,
+        the exact iteration count, the JAX boolean convergence flag, and the
+        raw fixed-size checkpoint trace buffers.
     """
 
     if initial_primal is None:
@@ -314,6 +352,8 @@ def run_pdhg(
     else:
         init = initial_primal
     dual0 = _zero_state_like(init)
+    trace_length = (config.max_iters + config.check_every - 1) // config.check_every
+    history_dtype = rho_a.dtype
     diagnostics0 = {
         "primal_delta": jnp.array(jnp.inf, dtype=rho_a.dtype),
         "dual_delta": jnp.array(jnp.inf, dtype=rho_a.dtype),
@@ -332,7 +372,18 @@ def run_pdhg(
         iterations_used=jnp.array(0, dtype=jnp.int32),
         converged=jnp.array(False),
         diagnostics=diagnostics0,
+        history_iterations=jnp.zeros((trace_length,), dtype=jnp.int32),
+        history_action=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_continuity=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_primal_delta=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_dual_delta=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_max_constraint=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_ceh_cg_residual=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_ceh_cg_iters=jnp.zeros((trace_length,), dtype=jnp.int32),
+        history_min_vartheta=jnp.zeros((trace_length,), dtype=history_dtype),
+        history_count=jnp.array(0, dtype=jnp.int32),
     )
+    h = 1.0 / float(num_steps)
 
     def cond_fn(loop_carry: PDHGCarry) -> Array:
         return (~loop_carry.converged) & (loop_carry.iterations_used < config.max_iters)
@@ -367,12 +418,14 @@ def run_pdhg(
         )
         next_iter = loop_carry.iterations_used + 1
         should_check = ((next_iter % config.check_every) == 0) | (next_iter == config.max_iters)
+        # The paper's Chambolle-Pock splitting requires tau * sigma < 1. The
+        # current defaults satisfy that but are intentionally aggressive.
         converged = should_check & (
             (diagnostics["primal_delta"] <= config.residual_tol)
             & (diagnostics["dual_delta"] <= config.residual_tol)
             & (diagnostics["max_constraint_residual"] <= config.feasibility_tol)
         )
-        return PDHGCarry(
+        next_carry = PDHGCarry(
             primal=primal_next,
             dual=dual_next,
             primal_bar=primal_bar_next,
@@ -380,7 +433,71 @@ def run_pdhg(
             iterations_used=next_iter,
             converged=converged,
             diagnostics=diagnostics,
+            history_iterations=loop_carry.history_iterations,
+            history_action=loop_carry.history_action,
+            history_continuity=loop_carry.history_continuity,
+            history_primal_delta=loop_carry.history_primal_delta,
+            history_dual_delta=loop_carry.history_dual_delta,
+            history_max_constraint=loop_carry.history_max_constraint,
+            history_ceh_cg_residual=loop_carry.history_ceh_cg_residual,
+            history_ceh_cg_iters=loop_carry.history_ceh_cg_iters,
+            history_min_vartheta=loop_carry.history_min_vartheta,
+            history_count=loop_carry.history_count,
         )
+        should_record = should_check & jnp.asarray(config.record_debug_trace)
+
+        def record_trace(carry: PDHGCarry) -> PDHGCarry:
+            slot = carry.history_count
+            action_value = _compute_action_from_state(graph, h, primal_next)
+            min_vartheta = jnp.min(primal_next.vartheta)
+            # When continuity is already small but action becomes non-finite,
+            # the current iterate is typically singular on the K/action side
+            # rather than failing the CE_h solve.
+            return PDHGCarry(
+                primal=carry.primal,
+                dual=carry.dual,
+                primal_bar=carry.primal_bar,
+                phi_cache=carry.phi_cache,
+                iterations_used=carry.iterations_used,
+                converged=carry.converged,
+                diagnostics=carry.diagnostics,
+                history_iterations=carry.history_iterations.at[slot].set(next_iter),
+                history_action=carry.history_action.at[slot].set(action_value),
+                history_continuity=carry.history_continuity.at[slot].set(
+                    diagnostics["continuity_residual"]
+                ),
+                history_primal_delta=carry.history_primal_delta.at[slot].set(
+                    diagnostics["primal_delta"]
+                ),
+                history_dual_delta=carry.history_dual_delta.at[slot].set(
+                    diagnostics["dual_delta"]
+                ),
+                history_max_constraint=carry.history_max_constraint.at[slot].set(
+                    diagnostics["max_constraint_residual"]
+                ),
+                history_ceh_cg_residual=carry.history_ceh_cg_residual.at[slot].set(
+                    diagnostics["ceh_cg_residual"]
+                ),
+                history_ceh_cg_iters=carry.history_ceh_cg_iters.at[slot].set(
+                    diagnostics["ceh_cg_iters"]
+                ),
+                history_min_vartheta=carry.history_min_vartheta.at[slot].set(min_vartheta),
+                history_count=carry.history_count + 1,
+            )
+
+        return lax.cond(should_record, record_trace, lambda c: c, next_carry)
 
     carry = lax.while_loop(cond_fn, body_fn, carry)
-    return carry.primal, carry.diagnostics, carry.iterations_used, carry.converged
+    trace_payload = {
+        "iterations": carry.history_iterations,
+        "action": carry.history_action,
+        "continuity_residual": carry.history_continuity,
+        "primal_delta": carry.history_primal_delta,
+        "dual_delta": carry.history_dual_delta,
+        "max_constraint_residual": carry.history_max_constraint,
+        "ceh_cg_residual": carry.history_ceh_cg_residual,
+        "ceh_cg_iters": carry.history_ceh_cg_iters,
+        "min_vartheta": carry.history_min_vartheta,
+        "num_records": carry.history_count,
+    }
+    return carry.primal, carry.diagnostics, carry.iterations_used, carry.converged, trace_payload
