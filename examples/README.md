@@ -2,6 +2,10 @@
 
 This folder contains runnable reproductions of the paper's small benchmark setups using the current solver implementation in this repository.
 
+Note:
+- Example scripts require the plotting dependency set.
+- For package installs, use `pip install "jgot[examples]"` if you want to run the example plots outside the development environment.
+
 Important:
 - These scripts reproduce the problem setups from the paper.
 - They run the repository's current active solver in `jgot.solve_ot`.

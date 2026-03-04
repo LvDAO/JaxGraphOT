@@ -37,6 +37,12 @@ Runtime assumptions:
 
 - Current development target is macOS
 - The package uses CPU-backed JAX
+- Plotting dependencies are only required for the example scripts
+
+Package installs:
+
+- Core library install: `pip install jgot`
+- Example plotting install: `pip install "jgot[examples]"`
 
 ## Documentation
 
@@ -48,6 +54,14 @@ Recommended entry points:
 - [`docs/getting-started.md`](docs/getting-started.md)
 - [`docs/graph-model.md`](docs/graph-model.md)
 - [`docs/debugging-and-diagnostics.md`](docs/debugging-and-diagnostics.md)
+
+## Release Automation
+
+Maintainer note:
+
+- Pushing a version tag such as `v0.1.0` runs the publish workflow and releases to PyPI.
+- Manual TestPyPI staging is available through the GitHub Actions `Publish` workflow.
+- Trusted Publishing must be configured on both PyPI and TestPyPI for the workflow to succeed.
 
 ## Quickstart
 
