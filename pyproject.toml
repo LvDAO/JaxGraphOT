@@ -41,6 +41,7 @@ Documentation = "https://github.com/LvDAO/JaxGraphOT/tree/main/docs"
 
 [dependency-groups]
 dev = [
+  "bump-my-version>=1.2.7",
   "matplotlib>=3.10",
   "pypdf>=6.7.5",
   "pytest>=8.3",
@@ -64,3 +65,7 @@ src = ["src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
