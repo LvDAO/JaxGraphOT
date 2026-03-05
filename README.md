@@ -82,17 +82,10 @@ Recommended starting points:
 ## Examples
 
 Runnable scripts:
-- [/Users/lyuwt/JaxGraphOT/examples/two_node_benchmark/run.py](/Users/lyuwt/JaxGraphOT/examples/two_node_benchmark/run.py)
-- [/Users/lyuwt/JaxGraphOT/examples/cycle_neighbor_transport/run.py](/Users/lyuwt/JaxGraphOT/examples/cycle_neighbor_transport/run.py)
-- [/Users/lyuwt/JaxGraphOT/examples/line_chain_transport/run.py](/Users/lyuwt/JaxGraphOT/examples/line_chain_transport/run.py)
-- [/Users/lyuwt/JaxGraphOT/examples/directed_reversible_transport/run.py](/Users/lyuwt/JaxGraphOT/examples/directed_reversible_transport/run.py)
-- [/Users/lyuwt/JaxGraphOT/examples/large_grid_transport/run.py](/Users/lyuwt/JaxGraphOT/examples/large_grid_transport/run.py)
+- `examples/two_node_benchmark/run.py`
+- `examples/cycle_neighbor_transport/run.py`
+- `examples/line_chain_transport/run.py`
+- `examples/directed_reversible_transport/run.py`
+- `examples/large_grid_transport/run.py`
 
-See [examples/README.md](/Users/lyuwt/JaxGraphOT/examples/README.md) for commands and outputs.
-
-## Release Automation
-
-Maintainer note:
-- Pushing a tag like `v0.1.0` triggers the publish workflow to PyPI.
-- Manual TestPyPI staging is available through the GitHub Actions `Publish` workflow.
-- Trusted Publishing must be configured on both PyPI and TestPyPI.
+See [examples/README.md](examples/README.md) for commands and outputs.
