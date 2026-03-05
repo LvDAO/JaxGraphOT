@@ -6,7 +6,10 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from .linear_solvers import solve_ceh_gauge_fixed, solve_tridiagonal_javg
+from .linear_solvers import (
+    solve_ceh_gauge_fixed,
+    solve_tridiagonal_javg,
+)
 from .means import MeanOps
 from .operators import avg_time, continuity_residual
 from .types import GraphSpec
@@ -26,6 +29,7 @@ def project_ceh(
     phi0: Array | None = None,
     cg_warm_start: bool = True,
     cg_preconditioner: str = "jacobi",
+    numerics_mode: str = "paper",
 ) -> tuple[Array, Array, Array, Array, Array]:
     """Project onto the discrete continuity constraint with fixed endpoints.
 
@@ -40,6 +44,8 @@ def project_ceh(
         phi0: Optional warm start for the dual potential.
         cg_warm_start: Whether to use ``phi0``.
         cg_preconditioner: Preconditioner identifier for the inner CG solve.
+        numerics_mode: Backward-compatibility argument. The runtime always uses
+            paper-style weighted numerics.
 
     Returns:
         A tuple ``(rho_pr, m_pr, phi, cg_residual, cg_iters)`` containing the
@@ -50,6 +56,7 @@ def project_ceh(
     m = jnp.asarray(m)
     rho_a = jnp.asarray(rho_a)
     rho_b = jnp.asarray(rho_b)
+    del numerics_mode
     phi_init = phi0 if cg_warm_start else None
     phi, cg_residual, cg_iters = solve_ceh_gauge_fixed(
         graph,
@@ -71,6 +78,10 @@ def project_ceh(
 
     _, pullback = jax.vjp(constraint_map, jnp.zeros_like(rho[1:-1]), jnp.zeros_like(m))
     drho_int, dm = pullback(phi)
+    node_weight = graph.pi[None, :]
+    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
+    drho_int = drho_int / jnp.maximum(node_weight, 1e-30)
+    dm = dm / jnp.maximum(edge_weight, 1e-30)
     drho = jnp.zeros_like(rho).at[1:-1].set(drho_int)
     rho_pr = (rho - drho).at[0].set(rho_a).at[-1].set(rho_b)
     m_pr = m - dm

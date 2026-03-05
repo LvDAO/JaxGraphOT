@@ -3,6 +3,10 @@
 The repository ships runnable examples under `/examples`. Each example writes
 artifacts to its own local `output/` directory.
 
+Numerics mode:
+- examples run with paper numerics by default.
+- `OTConfig.numerics_mode` is compatibility-only and must be `"paper"`.
+
 ## Examples Included
 
 ## Two-Node Benchmark

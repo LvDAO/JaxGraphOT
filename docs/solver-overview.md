@@ -13,6 +13,17 @@ The current algorithm has these main pieces:
 - a `CE_h` continuity projection solved by conjugate gradient,
 - pointwise projections for the remaining split constraints.
 
+## Numerical Modes
+
+The runtime uses the paper-style numerics only:
+- `CE_h` uses a weighted matrix-free normal operator with zero-mean gauge
+  projection and weighted Jacobi preconditioning.
+- `primal_delta` / `dual_delta` are computed in weighted norms aligned with
+  the paper-style Hilbert-space scaling.
+
+`OTConfig.numerics_mode` is retained only for compatibility and must be
+`"paper"`.
+
 ## What It Is Not
 
 The current solver is not:

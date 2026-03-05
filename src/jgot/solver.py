@@ -90,6 +90,7 @@ def _build_linear_warm_start(problem: OTProblem, config: OTConfig) -> OTState:
         phi0=None,
         cg_warm_start=False,
         cg_preconditioner=config.cg_preconditioner,
+        numerics_mode=config.numerics_mode,
     )
     rho_bar, q_node, rho_minus, rho_plus, vartheta = init_split_state(
         problem.graph,

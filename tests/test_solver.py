@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from jgot import (
     GraphSpec,
@@ -53,9 +54,33 @@ def _cycle_problem(num_nodes: int, *, num_steps: int) -> OTProblem:
     )
 
 
+def test_config_defaults_to_paper_mode() -> None:
+    assert OTConfig().numerics_mode == "paper"
+
+
+def test_config_accepts_explicit_paper_mode() -> None:
+    assert OTConfig(numerics_mode="paper").numerics_mode == "paper"
+
+
+def test_config_rejects_legacy_mode_with_migration_message() -> None:
+    with pytest.raises(ValueError, match="legacy mode has been removed; use numerics_mode='paper'"):
+        OTConfig(numerics_mode="legacy")
+
+
 def test_solver_zero_distance_for_identical_endpoints() -> None:
     problem = _two_node_problem(0.2, 0.2, num_steps=12)
     solution = solve_ot(problem, OTConfig(max_iters=40, check_every=5, cg_max_iters=64))
+    assert float(solution.distance) < 1e-6
+    assert solution.converged
+    assert solution.iterations_used == 1
+
+
+def test_solver_zero_distance_for_identical_endpoints_in_paper_mode() -> None:
+    problem = _two_node_problem(0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=40, check_every=5, cg_max_iters=64, numerics_mode="paper"),
+    )
     assert float(solution.distance) < 1e-6
     assert solution.converged
     assert solution.iterations_used == 1
@@ -70,11 +95,42 @@ def test_solver_is_symmetric_on_two_node_problem() -> None:
     assert abs(dist_forward - dist_backward) < 1e-6
 
 
+def test_solver_is_symmetric_on_two_node_problem_in_paper_mode() -> None:
+    forward = _two_node_problem(-0.4, 0.4, num_steps=24)
+    backward = _two_node_problem(0.4, -0.4, num_steps=24)
+    config = OTConfig(
+        max_iters=240,
+        check_every=10,
+        tol=1e-7,
+        cg_max_iters=96,
+        numerics_mode="paper",
+    )
+    dist_forward = float(solve_ot(forward, config).distance)
+    dist_backward = float(solve_ot(backward, config).distance)
+    assert abs(dist_forward - dist_backward) < 1e-6
+
+
 def test_solver_matches_two_node_reference_reasonably() -> None:
     alpha = -0.3
     beta = 0.3
     problem = _two_node_problem(alpha, beta, num_steps=28)
     solution = solve_ot(problem, OTConfig(max_iters=240, check_every=10, tol=1e-7, cg_max_iters=96))
+    reference = _reference_distance(alpha, beta)
+    rel_err = abs(float(solution.distance) - reference) / reference
+    assert solution.converged
+    assert rel_err < 1e-3
+    assert float(solution.diagnostics["continuity_residual"]) < 1e-8
+    assert float(solution.diagnostics["max_constraint_residual"]) < 1e-8
+
+
+def test_solver_matches_two_node_reference_reasonably_in_paper_mode() -> None:
+    alpha = -0.3
+    beta = 0.3
+    problem = _two_node_problem(alpha, beta, num_steps=28)
+    solution = solve_ot(
+        problem,
+        OTConfig(max_iters=320, check_every=10, tol=1e-7, cg_max_iters=128, numerics_mode="paper"),
+    )
     reference = _reference_distance(alpha, beta)
     rel_err = abs(float(solution.distance) - reference) / reference
     assert solution.converged
@@ -172,3 +228,21 @@ def test_debug_trace_path_still_runs_under_jit() -> None:
         OTConfig(max_iters=20, check_every=5, cg_max_iters=64, record_debug_trace=True),
     )
     assert solution.debug_trace is not None
+
+
+def test_solver_returns_debug_trace_in_paper_mode() -> None:
+    problem = _two_node_problem(-0.2, 0.2, num_steps=12)
+    solution = solve_ot(
+        problem,
+        OTConfig(
+            max_iters=20,
+            check_every=5,
+            cg_max_iters=64,
+            record_debug_trace=True,
+            numerics_mode="paper",
+        ),
+    )
+    trace = solution.debug_trace
+    assert trace is not None
+    assert trace.num_records > 0
+    assert len(np.asarray(trace.iterations)) == len(np.asarray(trace.action))

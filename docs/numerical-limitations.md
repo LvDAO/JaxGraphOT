@@ -31,16 +31,14 @@ satisfied.
 
 ## Paper Fidelity vs Practical Approximations
 
-The solver follows the paper's split formulation closely, but the current code
-still makes practical numerical simplifications.
+The runtime uses paper-style numerics for `CE_h` and weighted iterate deltas.
+`OTConfig.numerics_mode` remains only as a compatibility field and must be
+`"paper"`.
 
-In particular:
+Practical simplifications still remain:
 - pointwise subproblems are implemented with fixed-iteration scalar solves,
 - the `CE_h` projection is implemented in a numerically practical JAX form,
-  not as a literal weighted-operator transcription of the paper.
-
-These choices are reasonable for a first implementation, but they can matter on
-larger or stiffer problems.
+  following the paper's weighted operator structure in finite precision.
 
 ## Typical Singular Failure Mode
 

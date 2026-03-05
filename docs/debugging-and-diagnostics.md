@@ -15,6 +15,10 @@ Key fields:
 - `ceh_cg_residual`: residual of the inner `CE_h` conjugate-gradient solve
 - `ceh_cg_iters`: inner CG iterations used at the latest checkpoint
 
+Mode note:
+- `primal_delta` and `dual_delta` use weighted paper-style norms.
+- `OTConfig.numerics_mode` is compatibility-only and must be `"paper"`.
+
 ## What `converged=False` Means
 
 A run returns `converged=False` when the stopping rules were not all satisfied.
