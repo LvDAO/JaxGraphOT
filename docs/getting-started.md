@@ -4,8 +4,23 @@ This guide is the fastest path to a correct first solve.
 
 ## Install
 
+PyPI package:
+- [jgot on PyPI](https://pypi.org/project/jgot/)
+
+Core library install:
 ```bash
-uv sync
+pip install jgot
+```
+
+Install with plotting extras for examples:
+```bash
+pip install "jgot[examples]"
+```
+
+Development environment:
+
+```bash
+uv sync --group dev
 ```
 
 Current assumptions:
