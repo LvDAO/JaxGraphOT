@@ -6,6 +6,9 @@ problem on finite reversible graphs. The implementation follows the split
 formulation of Erbar et al. (2020), runs the expensive solver path under JIT,
 and currently targets CPU-backed JAX.
 
+Package link:
+- [jgot on PyPI](https://pypi.org/project/jgot/)
+
 ## Start Here
 
 - [Getting Started](getting-started.md): install, first solve, and endpoint normalization.
