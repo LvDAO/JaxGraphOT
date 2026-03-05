@@ -68,6 +68,14 @@ These control how long the outer solve runs and how often convergence is checked
 
 These control the inner `CE_h` projection solve.
 
+### Numerical mode
+- `numerics_mode`
+  - `"paper"` (default and only supported value)
+
+`numerics_mode` is kept for compatibility.
+Passing `"legacy"` now raises:
+- `legacy mode has been removed; use numerics_mode='paper'`
+
 ### Root-solver controls
 - `newton_iters`
 - `bisect_iters`
@@ -151,6 +159,10 @@ A dictionary containing the latest checkpoint values for:
 - `max_constraint_residual`
 - `ceh_cg_residual`
 - `ceh_cg_iters`
+
+Note:
+- `primal_delta` and `dual_delta` use the weighted paper-style Hilbert-space
+  scaling.
 
 ### `debug_trace`
 Optional checkpoint history returned when `record_debug_trace=True`.

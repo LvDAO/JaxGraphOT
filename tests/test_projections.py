@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jax
 import numpy as np
 
 from jgot import GraphSpec, LogMeanOps
@@ -98,3 +99,57 @@ def test_project_ceh_enforces_boundary_and_continuity() -> None:
     assert np.max(np.abs(res)) < 1e-6
     assert float(cg_residual) < 1e-8
     assert int(cg_iters) > 0
+
+
+def test_project_ceh_paper_enforces_boundary_and_continuity() -> None:
+    graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
+    rho = np.array([[1.2, 0.8], [1.1, 0.9], [0.7, 1.3]])
+    m = np.zeros((2, graph.num_edges))
+    rho_a = np.array([1.5, 0.5])
+    rho_b = np.array([0.5, 1.5])
+    rho_pr, m_pr, _, cg_residual, cg_iters = project_ceh(
+        graph,
+        rho,
+        m,
+        rho_a,
+        rho_b,
+        cg_max_iters=96,
+        cg_tol=1e-12,
+        numerics_mode="paper",
+    )
+    np.testing.assert_allclose(np.asarray(rho_pr)[0], rho_a)
+    np.testing.assert_allclose(np.asarray(rho_pr)[-1], rho_b)
+    res = np.asarray(continuity_residual(graph, rho_pr, m_pr, rho_a, rho_b))
+    assert np.max(np.abs(res)) < 1e-6
+    assert float(cg_residual) < 1e-8
+    assert int(cg_iters) > 0
+
+
+def test_project_ceh_paper_matches_eager_under_jit() -> None:
+    graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
+    rho = np.array([[1.2, 0.8], [1.1, 0.9], [0.7, 1.3]])
+    m = np.zeros((2, graph.num_edges))
+    rho_a = np.array([1.5, 0.5])
+    rho_b = np.array([0.5, 1.5])
+
+    def run_once(rho_value, m_value):
+        return project_ceh(
+            graph,
+            rho_value,
+            m_value,
+            rho_a,
+            rho_b,
+            cg_max_iters=96,
+            cg_tol=1e-12,
+            numerics_mode="paper",
+        )
+
+    eager = run_once(rho, m)
+    jitted = jax.jit(run_once)(rho, m)
+    for eager_item, jit_item in zip(eager, jitted, strict=True):
+        np.testing.assert_allclose(
+            np.asarray(jit_item),
+            np.asarray(eager_item),
+            atol=1e-9,
+            rtol=1e-9,
+        )

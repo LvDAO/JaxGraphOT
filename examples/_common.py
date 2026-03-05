@@ -129,6 +129,12 @@ def solve_problem(
     num_steps: int,
     config: OTConfig = DEFAULT_CONFIG,
 ):
+    """Solve one OT instance for examples.
+
+    The runtime always uses the paper-style weighted ``CE_h`` path.
+    ``OTConfig.numerics_mode`` is kept for compatibility and must be ``"paper"``.
+    """
+
     problem = OTProblem(
         graph=graph,
         time=TimeDiscretization(num_steps),

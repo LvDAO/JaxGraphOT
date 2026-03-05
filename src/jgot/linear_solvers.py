@@ -12,6 +12,32 @@ from .types import GraphSpec
 Array = jax.Array
 
 
+def _project_zero_mean(value: Array) -> Array:
+    """Project a space-time field onto the zero-mean gauge subspace."""
+
+    return value - jnp.mean(value)
+
+
+def _build_ceh_constraint_pullback(
+    graph: GraphSpec,
+    rho: Array,
+    m: Array,
+) -> tuple:
+    """Build the linearized continuity map and its VJP pullback."""
+
+    zero_boundary = jnp.zeros_like(rho[0])
+    zero_rho_int = jnp.zeros_like(rho[1:-1])
+    zero_m = jnp.zeros_like(m)
+
+    def constraint_map(drho_int: Array, dm: Array) -> Array:
+        drho = jnp.zeros_like(rho)
+        drho = drho.at[1:-1].set(drho_int)
+        return continuity_residual(graph, drho, dm, zero_boundary, zero_boundary)
+
+    _, pullback = jax.vjp(constraint_map, zero_rho_int, zero_m)
+    return constraint_map, pullback
+
+
 def solve_tridiagonal_javg(rhs: Array, rho: Array, rho_a: Array, rho_b: Array) -> Array:
     """Solve the time-only tridiagonal system used by ``project_javg``.
 
@@ -141,30 +167,13 @@ def solve_ceh_gauge_fixed(
     x0: Array | None = None,
     preconditioner: str = "jacobi",
 ) -> tuple[Array, Array, Array]:
-    """Solve the gauge-fixed normal equations for the ``CE_h`` projection.
+    """Solve the weighted gauge-fixed normal equations for ``CE_h``.
 
-    This routine builds the continuity operator implicitly through
-    ``jax.vjp`` and solves the gauge-fixed normal equations with conjugate
-    gradient. The paper formulates this projection in weighted norms on nodes
-    and edges; the current implementation instead works with a Euclideanized
-    residual map, which is convenient for JAX but can change conditioning on
-    larger graph instances.
-
-    Args:
-        graph: Sparse reversible graph.
-        rho: Node-density path with shape ``(N + 1, X)``.
-        m: Edge flux path with shape ``(N, E)``.
-        rho_a: Fixed initial density with shape ``(X,)``.
-        rho_b: Fixed terminal density with shape ``(X,)``.
-        cg_max_iters: Maximum number of CG iterations.
-        cg_tol: Residual tolerance for the CG solve.
-        x0: Optional warm start for the dual potential ``phi``.
-        preconditioner: Preconditioner identifier. ``"jacobi"`` is the only
-            supported value in the current implementation.
-
-    Returns:
-        A tuple ``(phi, residual, iters_used)`` containing the dual potential
-        and the associated CG diagnostics.
+    This variant follows the weighted Hilbert-space structure used by the paper:
+    node increments are weighted by ``pi`` and edge increments by
+    ``Q(x, y) * pi(x)`` (represented by the sparse edge list). The normal
+    equation is applied matrix-free as ``C M^{-1} C^T`` and restricted to the
+    zero-mean gauge subspace.
     """
 
     rho = jnp.asarray(rho)
@@ -173,45 +182,47 @@ def solve_ceh_gauge_fixed(
     rho_b = jnp.asarray(rho_b)
     num_steps = m.shape[0]
     h = 1.0 / num_steps
-    zero_boundary = jnp.zeros_like(rho_a)
-    zero_rho_int = jnp.zeros_like(rho[1:-1])
-    zero_m = jnp.zeros_like(m)
-
-    def constraint_map(drho_int: Array, dm: Array) -> Array:
-        drho = jnp.zeros_like(rho)
-        drho = drho.at[1:-1].set(drho_int)
-        return continuity_residual(graph, drho, dm, zero_boundary, zero_boundary)
-
-    _, pullback = jax.vjp(constraint_map, zero_rho_int, zero_m)
+    constraint_map, pullback = _build_ceh_constraint_pullback(graph, rho, m)
     residual = continuity_residual(graph, rho, m, rho_a, rho_b)
-    b = residual
+    b = _project_zero_mean(residual)
+
+    pi_weight = graph.pi[None, :]
+    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
+    rho_inv_weight = 1.0 / jnp.maximum(pi_weight, 1e-30)
+    m_inv_weight = 1.0 / jnp.maximum(edge_weight, 1e-30)
 
     def matvec(phi: Array) -> Array:
+        phi = _project_zero_mean(phi)
         drho_int_adj, dm_adj = pullback(phi)
-        projected = constraint_map(drho_int_adj, dm_adj)
-        const_mode = jnp.mean(phi) * jnp.ones_like(phi)
-        return projected + const_mode
+        drho_int = rho_inv_weight * drho_int_adj
+        dm = m_inv_weight * dm_adj
+        projected = constraint_map(drho_int, dm)
+        return _project_zero_mean(projected)
 
     if preconditioner == "jacobi":
+        pi_inv = 1.0 / jnp.maximum(graph.pi[None, :], 1e-30)
         time_diag = jnp.full((num_steps, 1), 2.0 / (h * h), dtype=rho.dtype)
         time_diag = time_diag.at[0].set(1.0 / (h * h))
         time_diag = time_diag.at[-1].set(1.0 / (h * h))
-        spatial_diag = 1.0 + 0.5 * graph.out_rate[None, :]
-        gauge_diag = jnp.array(1.0 / (num_steps * graph.num_nodes), dtype=rho.dtype)
-        diag = time_diag + spatial_diag + gauge_diag
-        diag_inv = 1.0 / jnp.maximum(diag, 1e-30)
+        time_diag = time_diag * pi_inv
+        spatial_diag = 0.5 * graph.out_rate[None, :] * pi_inv
+        diag = jnp.maximum(time_diag + spatial_diag, 1e-12)
+        diag_inv = 1.0 / diag
 
         def precond(value: Array) -> Array:
-            return diag_inv * value
+            value = _project_zero_mean(value)
+            return _project_zero_mean(diag_inv * value)
 
     else:
         precond = None
 
-    return conjugate_gradient(
+    x_init = None if x0 is None else _project_zero_mean(jnp.asarray(x0))
+    phi, residual_norm, iters_used = conjugate_gradient(
         matvec,
         b,
         max_iters=cg_max_iters,
         tol=cg_tol,
-        x0=x0,
+        x0=x_init,
         preconditioner=precond,
     )
+    return _project_zero_mean(phi), residual_norm, iters_used

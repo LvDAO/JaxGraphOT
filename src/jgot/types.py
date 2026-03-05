@@ -198,13 +198,15 @@ class OTConfig:
     - Scalar root-solver controls: ``newton_iters``, ``bisect_iters``
     - Conjugate-gradient controls: ``cg_max_iters``, ``cg_tol``,
       ``cg_warm_start``, ``cg_preconditioner``
+    - Numerical kernel mode compatibility field: ``numerics_mode``
     - Warm start policy: ``warm_start``
     - Optional checkpoint tracing: ``record_debug_trace``
 
     Notes:
         ``tau * sigma`` must remain strictly less than ``1``. ``tol`` is kept
         only as a backward-compatible alias for ``residual_tol``. The defaults
-        are the intended starting point for normal usage.
+        are the intended starting point for normal usage. ``numerics_mode`` is
+        kept for backward compatibility and accepts only ``"paper"``.
     """
 
     tau: float = 0.95
@@ -222,6 +224,7 @@ class OTConfig:
     cg_tol: float = 1e-10
     cg_warm_start: bool = True
     cg_preconditioner: str = "jacobi"
+    numerics_mode: str = "paper"
     record_debug_trace: bool = False
 
     def __post_init__(self) -> None:
@@ -245,6 +248,8 @@ class OTConfig:
             raise ValueError("cg_max_iters must be positive")
         if self.cg_preconditioner != "jacobi":
             raise ValueError("cg_preconditioner must be 'jacobi' in v1")
+        if self.numerics_mode != "paper":
+            raise ValueError("legacy mode has been removed; use numerics_mode='paper'")
 
 
 @dataclass(frozen=True)

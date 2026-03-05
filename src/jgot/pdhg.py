@@ -54,6 +54,30 @@ def _state_norm(state: OTState) -> Array:
     return jnp.sqrt(sum(jnp.sum(arr * arr) for arr in jax.tree_util.tree_leaves(state)))
 
 
+def _state_norm_weighted(state: OTState, graph: GraphSpec) -> Array:
+    """Compute a paper-style weighted norm across split-state blocks."""
+
+    node_weight = graph.pi[None, :]
+    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
+    terms = [
+        jnp.sum(node_weight * (state.rho * state.rho)),
+        jnp.sum(edge_weight * (state.m * state.m)),
+        jnp.sum(edge_weight * (state.vartheta * state.vartheta)),
+        jnp.sum(edge_weight * (state.rho_minus * state.rho_minus)),
+        jnp.sum(edge_weight * (state.rho_plus * state.rho_plus)),
+        jnp.sum(node_weight * (state.rho_bar * state.rho_bar)),
+        jnp.sum(node_weight * (state.q_node * state.q_node)),
+    ]
+    return jnp.sqrt(sum(terms))
+
+
+def _dual_pair_norm_weighted(m: Array, vartheta: Array, graph: GraphSpec) -> Array:
+    """Compute the weighted norm for dual ``(m, vartheta)`` blocks."""
+
+    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
+    return jnp.sqrt(jnp.sum(edge_weight * (m * m)) + jnp.sum(edge_weight * (vartheta * vartheta)))
+
+
 def _compute_action_from_state(graph: GraphSpec, h: float, state: OTState) -> Array:
     """Compute the discrete action directly from a split state.
 
@@ -227,6 +251,7 @@ def prox_g(
         phi0=phi0,
         cg_warm_start=config.cg_warm_start,
         cg_preconditioner=config.cg_preconditioner,
+        numerics_mode=config.numerics_mode,
     )
     rho_minus, rho_plus, vartheta = project_k(
         mean_ops,
@@ -264,13 +289,21 @@ def compute_diagnostics(
         A dictionary containing primal and dual deltas, continuity residual,
         ``K``-set violation, endpoint residual, the combined constraint
         residual, and the latest ``CE_h`` CG diagnostics.
+
+    Notes:
+        Iterate deltas are measured in the weighted paper-style Hilbert-space
+        norms.
     """
 
-    primal_delta = _state_norm(_state_sub(primal, prev_primal)) / (1.0 + _state_norm(prev_primal))
-    dual_num = jnp.sqrt(
-        jnp.sum((dual.m - prev_dual.m) ** 2) + jnp.sum((dual.vartheta - prev_dual.vartheta) ** 2)
+    primal_delta = _state_norm_weighted(
+        _state_sub(primal, prev_primal), graph
+    ) / (1.0 + _state_norm_weighted(prev_primal, graph))
+    dual_num = _dual_pair_norm_weighted(
+        dual.m - prev_dual.m,
+        dual.vartheta - prev_dual.vartheta,
+        graph,
     )
-    dual_den = jnp.sqrt(jnp.sum(prev_dual.m**2) + jnp.sum(prev_dual.vartheta**2))
+    dual_den = _dual_pair_norm_weighted(prev_dual.m, prev_dual.vartheta, graph)
     dual_delta = dual_num / (1.0 + dual_den)
     cont = continuity_residual(graph, primal.rho, primal.m, rho_a, rho_b)
     continuity_max = jnp.max(jnp.abs(cont))
