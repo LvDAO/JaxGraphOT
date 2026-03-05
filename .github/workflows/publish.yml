@@ -14,6 +14,11 @@ on:
         options:
           - testpypi
           - pypi
+      skip_tests:
+        description: "Skip pytest in validate job (manual runs only)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -46,6 +51,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Test
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
         run: uv run pytest -q
 
   build:
