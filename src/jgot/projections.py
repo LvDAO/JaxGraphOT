@@ -43,7 +43,8 @@ def project_ceh(
         cg_tol: Residual tolerance for the inner CG solve.
         phi0: Optional warm start for the dual potential.
         cg_warm_start: Whether to use ``phi0``.
-        cg_preconditioner: Preconditioner identifier for the inner CG solve.
+        cg_preconditioner: Inner CG preconditioner, either ``"jacobi"`` or
+            ``"block_jacobi"``.
         numerics_mode: Backward-compatibility argument. The runtime always uses
             paper-style weighted numerics.
 

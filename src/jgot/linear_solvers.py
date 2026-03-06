@@ -38,23 +38,20 @@ def _build_ceh_constraint_pullback(
     return constraint_map, pullback
 
 
-def solve_tridiagonal_javg(rhs: Array, rho: Array, rho_a: Array, rho_b: Array) -> Array:
-    """Solve the time-only tridiagonal system used by ``project_javg``.
+def _solve_tridiagonal_jax(dl: Array, d: Array, du: Array, rhs: Array) -> Array:
+    """Solve a batch of tridiagonal systems with vector right-hand sides."""
 
-    Args:
-        rhs: Right-hand side with a leading time dimension of length ``N``.
-        rho: Current node-density path. Included for interface symmetry with the
-            caller.
-        rho_a: Initial density. Included for interface symmetry with the caller.
-        rho_b: Terminal density. Included for interface symmetry with the
-            caller.
+    dl = jnp.asarray(dl)
+    d = jnp.asarray(d)
+    du = jnp.asarray(du)
+    rhs = jnp.asarray(rhs)
+    solution = lax.linalg.tridiagonal_solve(dl, d, du, rhs[..., None])
+    return solution[..., 0]
 
-    Returns:
-        The tridiagonal solve result, interpreted by the caller as the
-        Lagrange-multiplier array for the ``Javg`` projection.
-    """
 
-    del rho, rho_a, rho_b
+def _solve_tridiagonal_javg_thomas_reference(rhs: Array) -> Array:
+    """Reference Thomas solve for the ``Javg`` tridiagonal system."""
+
     rhs = jnp.asarray(rhs)
     num_steps = rhs.shape[0]
     diag = jnp.full((num_steps,), 1.5, dtype=rhs.dtype)
@@ -87,6 +84,48 @@ def solve_tridiagonal_javg(rhs: Array, rho: Array, rho_a: Array, rho_b: Array) -
 
     lam = lax.fori_loop(0, num_steps - 1, back_body, lam)
     return lam
+
+
+def _build_javg_tridiagonal_coeffs(num_steps: int, dtype) -> tuple[Array, Array, Array]:
+    """Return the tridiagonal coefficients for the ``Javg`` projection."""
+
+    lower = jnp.full((num_steps,), 0.25, dtype=dtype)
+    lower = lower.at[0].set(0.0)
+    diag = jnp.full((num_steps,), 1.5, dtype=dtype)
+    diag = diag.at[0].set(1.25)
+    diag = diag.at[-1].set(1.25)
+    upper = jnp.full((num_steps,), 0.25, dtype=dtype)
+    upper = upper.at[-1].set(0.0)
+    return lower, diag, upper
+
+
+def solve_tridiagonal_javg(rhs: Array, rho: Array, rho_a: Array, rho_b: Array) -> Array:
+    """Solve the time-only tridiagonal system used by ``project_javg``.
+
+    Args:
+        rhs: Right-hand side with a leading time dimension of length ``N``.
+        rho: Current node-density path. Included for interface symmetry with the
+            caller.
+        rho_a: Initial density. Included for interface symmetry with the caller.
+        rho_b: Terminal density. Included for interface symmetry with the
+            caller.
+
+    Returns:
+        The tridiagonal solve result, interpreted by the caller as the
+        Lagrange-multiplier array for the ``Javg`` projection.
+    """
+
+    del rho, rho_a, rho_b
+    rhs = jnp.asarray(rhs)
+    num_steps = rhs.shape[0]
+    num_nodes = rhs.shape[1]
+    lower, diag, upper = _build_javg_tridiagonal_coeffs(num_steps, rhs.dtype)
+    lower = jnp.broadcast_to(lower[None, :], (num_nodes, num_steps))
+    diag = jnp.broadcast_to(diag[None, :], (num_nodes, num_steps))
+    upper = jnp.broadcast_to(upper[None, :], (num_nodes, num_steps))
+    rhs_t = jnp.swapaxes(rhs, 0, 1)
+    lam_t = _solve_tridiagonal_jax(lower, diag, upper, rhs_t)
+    return jnp.swapaxes(lam_t, 0, 1)
 
 
 def conjugate_gradient(
@@ -155,6 +194,78 @@ def conjugate_gradient(
     return x, residual, iters_used
 
 
+def _build_ceh_matvec(graph: GraphSpec, rho: Array, m: Array):
+    """Build the weighted matrix-free ``CE_h`` normal operator."""
+
+    constraint_map, pullback = _build_ceh_constraint_pullback(graph, rho, m)
+    pi_weight = graph.pi[None, :]
+    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
+    rho_inv_weight = 1.0 / jnp.maximum(pi_weight, 1e-30)
+    m_inv_weight = 1.0 / jnp.maximum(edge_weight, 1e-30)
+
+    def matvec(phi: Array) -> Array:
+        phi = _project_zero_mean(phi)
+        drho_int_adj, dm_adj = pullback(phi)
+        drho_int = rho_inv_weight * drho_int_adj
+        dm = m_inv_weight * dm_adj
+        projected = constraint_map(drho_int, dm)
+        return _project_zero_mean(projected)
+
+    return matvec
+
+
+def _build_ceh_rhs(graph: GraphSpec, rho: Array, m: Array, rho_a: Array, rho_b: Array) -> Array:
+    """Build the right-hand side for the gauge-fixed ``CE_h`` normal equations."""
+
+    residual = continuity_residual(graph, rho, m, rho_a, rho_b)
+    return _project_zero_mean(residual)
+
+
+def _build_ceh_preconditioner(
+    graph: GraphSpec,
+    *,
+    num_steps: int,
+    dtype,
+    preconditioner: str,
+):
+    """Build the requested preconditioner for the ``CE_h`` normal equations."""
+
+    h = 1.0 / num_steps
+    pi_inv = 1.0 / jnp.maximum(graph.pi[None, :], 1e-30)
+    time_diag = jnp.full((num_steps, 1), 2.0 / (h * h), dtype=dtype)
+    time_diag = time_diag.at[0].set(1.0 / (h * h))
+    time_diag = time_diag.at[-1].set(1.0 / (h * h))
+    diag = jnp.maximum((time_diag + 0.5 * graph.out_rate[None, :]) * pi_inv, 1e-12)
+
+    if preconditioner == "jacobi":
+        diag_inv = 1.0 / diag
+
+        def apply(value: Array) -> Array:
+            value = _project_zero_mean(value)
+            return _project_zero_mean(diag_inv * value)
+
+        return apply
+
+    if preconditioner == "block_jacobi":
+        lower_base = jnp.full((num_steps,), -1.0 / (h * h), dtype=dtype)
+        lower_base = lower_base.at[0].set(0.0)
+        upper_base = jnp.full((num_steps,), -1.0 / (h * h), dtype=dtype)
+        upper_base = upper_base.at[-1].set(0.0)
+        pi_inv_vec = 1.0 / jnp.maximum(graph.pi, 1e-30)
+        lower = pi_inv_vec[:, None] * lower_base[None, :]
+        upper = pi_inv_vec[:, None] * upper_base[None, :]
+        diag_blocks = diag.T
+
+        def apply(value: Array) -> Array:
+            value = _project_zero_mean(value)
+            solved_t = _solve_tridiagonal_jax(lower, diag_blocks, upper, jnp.swapaxes(value, 0, 1))
+            return _project_zero_mean(jnp.swapaxes(solved_t, 0, 1))
+
+        return apply
+
+    raise ValueError(f"unsupported CE_h preconditioner: {preconditioner}")
+
+
 def solve_ceh_gauge_fixed(
     graph: GraphSpec,
     rho: Array,
@@ -181,40 +292,14 @@ def solve_ceh_gauge_fixed(
     rho_a = jnp.asarray(rho_a)
     rho_b = jnp.asarray(rho_b)
     num_steps = m.shape[0]
-    h = 1.0 / num_steps
-    constraint_map, pullback = _build_ceh_constraint_pullback(graph, rho, m)
-    residual = continuity_residual(graph, rho, m, rho_a, rho_b)
-    b = _project_zero_mean(residual)
-
-    pi_weight = graph.pi[None, :]
-    edge_weight = 0.5 * graph.q[None, :] * graph.pi[graph.src][None, :]
-    rho_inv_weight = 1.0 / jnp.maximum(pi_weight, 1e-30)
-    m_inv_weight = 1.0 / jnp.maximum(edge_weight, 1e-30)
-
-    def matvec(phi: Array) -> Array:
-        phi = _project_zero_mean(phi)
-        drho_int_adj, dm_adj = pullback(phi)
-        drho_int = rho_inv_weight * drho_int_adj
-        dm = m_inv_weight * dm_adj
-        projected = constraint_map(drho_int, dm)
-        return _project_zero_mean(projected)
-
-    if preconditioner == "jacobi":
-        pi_inv = 1.0 / jnp.maximum(graph.pi[None, :], 1e-30)
-        time_diag = jnp.full((num_steps, 1), 2.0 / (h * h), dtype=rho.dtype)
-        time_diag = time_diag.at[0].set(1.0 / (h * h))
-        time_diag = time_diag.at[-1].set(1.0 / (h * h))
-        time_diag = time_diag * pi_inv
-        spatial_diag = 0.5 * graph.out_rate[None, :] * pi_inv
-        diag = jnp.maximum(time_diag + spatial_diag, 1e-12)
-        diag_inv = 1.0 / diag
-
-        def precond(value: Array) -> Array:
-            value = _project_zero_mean(value)
-            return _project_zero_mean(diag_inv * value)
-
-    else:
-        precond = None
+    matvec = _build_ceh_matvec(graph, rho, m)
+    b = _build_ceh_rhs(graph, rho, m, rho_a, rho_b)
+    precond = _build_ceh_preconditioner(
+        graph,
+        num_steps=num_steps,
+        dtype=rho.dtype,
+        preconditioner=preconditioner,
+    )
 
     x_init = None if x0 is None else _project_zero_mean(jnp.asarray(x0))
     phi, residual_norm, iters_used = conjugate_gradient(

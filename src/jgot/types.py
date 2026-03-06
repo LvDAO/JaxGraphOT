@@ -121,9 +121,10 @@ class GraphSpec:
 
         The inputs define a directed rate graph through ``src``, ``dst``, and
         ``q``. If ``pi`` is omitted, the constructor infers the stationary
-        distribution under the reversibility assumption. Every positive edge must
-        have an explicit reverse edge. When reversibility checks are enabled,
-        nonreversible inputs raise ``ValueError``.
+        distribution under the reversibility assumption by combining host-side
+        topology preprocessing with an internal JAX numeric kernel. Every
+        positive edge must have an explicit reverse edge. When reversibility
+        checks are enabled, nonreversible inputs raise ``ValueError``.
 
         Args:
             num_nodes: Total number of nodes in the graph.
@@ -246,8 +247,8 @@ class OTConfig:
             raise ValueError("newton_iters and bisect_iters must be positive")
         if self.cg_max_iters <= 0:
             raise ValueError("cg_max_iters must be positive")
-        if self.cg_preconditioner != "jacobi":
-            raise ValueError("cg_preconditioner must be 'jacobi' in v1")
+        if self.cg_preconditioner not in {"jacobi", "block_jacobi"}:
+            raise ValueError("cg_preconditioner must be 'jacobi' or 'block_jacobi'")
         if self.numerics_mode != "paper":
             raise ValueError("legacy mode has been removed; use numerics_mode='paper'")
 
