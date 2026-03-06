@@ -1,6 +1,6 @@
 [project]
 name = "jgot"
-version = "0.2.0"
+version = "0.2.2"
 description = "Dynamic optimal transport on sparse reversible graphs in JAX"
 readme = "README.md"
 license = "MIT"
@@ -67,7 +67,7 @@ src = ["src", "tests", "examples"]
 select = ["E", "F", "I"]
 
 [tool.bumpversion]
-current_version = "0.2.0"
+current_version = "0.2.2"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = 'version = "{current_version}"'

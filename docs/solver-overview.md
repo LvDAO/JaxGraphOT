@@ -17,7 +17,9 @@ The current algorithm has these main pieces:
 
 The runtime uses the paper-style numerics only:
 - `CE_h` uses a weighted matrix-free normal operator with zero-mean gauge
-  projection and weighted Jacobi preconditioning.
+  projection. The default preconditioner is weighted Jacobi, and
+  `cg_preconditioner="block_jacobi"` enables a stronger GPU-safe time-block
+  alternative.
 - `primal_delta` / `dual_delta` are computed in weighted norms aligned with
   the paper-style Hilbert-space scaling.
 

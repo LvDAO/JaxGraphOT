@@ -54,12 +54,34 @@ def _cycle_problem(num_nodes: int, *, num_steps: int) -> OTProblem:
     )
 
 
+def _directed_reversible_problem(*, num_steps: int) -> OTProblem:
+    graph = GraphSpec.from_directed_rates(
+        3,
+        src=[0, 1, 1, 2],
+        dst=[1, 0, 2, 1],
+        q=[2.0, 1.0, 1.0, 2.0],
+    )
+    mass_a = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    mass_b = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    return OTProblem(
+        graph=graph,
+        time=TimeDiscretization(num_steps),
+        rho_a=mass_a / np.asarray(graph.pi),
+        rho_b=mass_b / np.asarray(graph.pi),
+        mean_ops=LogMeanOps(),
+    )
+
+
 def test_config_defaults_to_paper_mode() -> None:
     assert OTConfig().numerics_mode == "paper"
 
 
 def test_config_accepts_explicit_paper_mode() -> None:
     assert OTConfig(numerics_mode="paper").numerics_mode == "paper"
+
+
+def test_config_accepts_block_jacobi_preconditioner() -> None:
+    assert OTConfig(cg_preconditioner="block_jacobi").cg_preconditioner == "block_jacobi"
 
 
 def test_config_rejects_legacy_mode_with_migration_message() -> None:
@@ -69,7 +91,14 @@ def test_config_rejects_legacy_mode_with_migration_message() -> None:
 
 def test_solver_zero_distance_for_identical_endpoints() -> None:
     problem = _two_node_problem(0.2, 0.2, num_steps=12)
-    solution = solve_ot(problem, OTConfig(max_iters=40, check_every=5, cg_max_iters=64))
+    solution = solve_ot(
+        problem,
+        OTConfig(
+            max_iters=40,
+            check_every=5,
+            cg_max_iters=64,
+        ),
+    )
     assert float(solution.distance) < 1e-6
     assert solution.converged
     assert solution.iterations_used == 1
@@ -79,7 +108,12 @@ def test_solver_zero_distance_for_identical_endpoints_in_paper_mode() -> None:
     problem = _two_node_problem(0.2, 0.2, num_steps=12)
     solution = solve_ot(
         problem,
-        OTConfig(max_iters=40, check_every=5, cg_max_iters=64, numerics_mode="paper"),
+        OTConfig(
+            max_iters=40,
+            check_every=5,
+            cg_max_iters=64,
+            numerics_mode="paper",
+        ),
     )
     assert float(solution.distance) < 1e-6
     assert solution.converged
@@ -114,7 +148,15 @@ def test_solver_matches_two_node_reference_reasonably() -> None:
     alpha = -0.3
     beta = 0.3
     problem = _two_node_problem(alpha, beta, num_steps=28)
-    solution = solve_ot(problem, OTConfig(max_iters=240, check_every=10, tol=1e-7, cg_max_iters=96))
+    solution = solve_ot(
+        problem,
+        OTConfig(
+            max_iters=240,
+            check_every=10,
+            tol=1e-7,
+            cg_max_iters=96,
+        ),
+    )
     reference = _reference_distance(alpha, beta)
     rel_err = abs(float(solution.distance) - reference) / reference
     assert solution.converged
@@ -171,6 +213,48 @@ def test_four_cycle_keeps_long_path_mass_small() -> None:
     midpoint = np.asarray(solution.state.rho)[problem.time.num_steps // 2]
     assert midpoint[2] + midpoint[3] < 1e-2
     assert float(solution.diagnostics["continuity_residual"]) < 1e-8
+
+
+def test_directed_reversible_solver_preserves_constraints() -> None:
+    problem = _directed_reversible_problem(num_steps=16)
+    solution = solve_ot(
+        problem,
+        OTConfig(
+            max_iters=1200,
+            check_every=20,
+            residual_tol=1e-7,
+            feasibility_tol=1e-7,
+            cg_max_iters=128,
+        ),
+    )
+    assert np.isfinite(float(solution.distance))
+    assert np.isfinite(float(solution.action))
+    assert float(solution.diagnostics["endpoint_residual"]) == 0.0
+    assert float(solution.diagnostics["continuity_residual"]) < 1e-8
+    assert float(solution.diagnostics["max_constraint_residual"]) < 1e-8
+
+
+def test_solver_block_jacobi_runs_on_two_node_problem() -> None:
+    alpha = -0.3
+    beta = 0.3
+    problem = _two_node_problem(alpha, beta, num_steps=20)
+    solution = solve_ot(
+        problem,
+        OTConfig(
+            max_iters=240,
+            check_every=10,
+            tol=1e-7,
+            cg_max_iters=64,
+            cg_preconditioner="block_jacobi",
+        ),
+    )
+    reference = _reference_distance(alpha, beta)
+    rel_err = abs(float(solution.distance) - reference) / reference
+    assert solution.converged
+    assert rel_err < 5e-3
+    assert float(solution.diagnostics["endpoint_residual"]) == 0.0
+    assert float(solution.diagnostics["continuity_residual"]) < 1e-8
+    assert float(solution.diagnostics["max_constraint_residual"]) < 1e-8
 
 
 def test_solver_returns_debug_trace_when_enabled() -> None:

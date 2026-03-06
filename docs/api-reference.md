@@ -67,6 +67,9 @@ These control how long the outer solve runs and how often convergence is checked
 - `cg_preconditioner`
 
 These control the inner `CE_h` projection solve.
+- `cg_preconditioner` accepts:
+  - `"jacobi"` (default)
+  - `"block_jacobi"` (time-block tridiagonal preconditioner)
 
 ### Numerical mode
 - `numerics_mode`

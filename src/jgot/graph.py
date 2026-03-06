@@ -1,7 +1,8 @@
 """Graph validation and :class:`jgot.GraphSpec` construction.
 
-Preprocessing lives here on the Python/NumPy side, outside the JAX/JIT hot
-path.
+Structural preprocessing still lives on the Python/NumPy side. Reversible
+stationary-distribution inference uses a host-built BFS tree together with an
+internal JAX kernel for the numeric log-ratio propagation.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Iterable
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -93,6 +95,39 @@ def _check_connected(num_nodes: int, src: np.ndarray, dst: np.ndarray) -> None:
         raise ValueError("graph must be connected")
 
 
+def _build_bfs_tree_edge_order(num_nodes: int, src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+    """Build a root-0 BFS tree as a fixed directed-edge order.
+
+    The returned array has length ``num_nodes - 1`` and lists the directed edge
+    used to discover each non-root node. Connectivity is re-checked from root 0
+    so the numeric JAX kernel can assume a complete tree order.
+    """
+
+    adjacency: list[list[int]] = [[] for _ in range(num_nodes)]
+    for edge_idx, x in enumerate(src.tolist()):
+        adjacency[x].append(edge_idx)
+
+    seen = np.zeros(num_nodes, dtype=bool)
+    seen[0] = True
+    queue: deque[int] = deque([0])
+    tree_edge_order = np.empty(num_nodes - 1, dtype=np.int32)
+    num_tree_edges = 0
+
+    while queue:
+        node = queue.popleft()
+        for edge_idx in adjacency[node]:
+            nbr = int(dst[edge_idx])
+            if not seen[nbr]:
+                seen[nbr] = True
+                tree_edge_order[num_tree_edges] = edge_idx
+                num_tree_edges += 1
+                queue.append(nbr)
+
+    if num_tree_edges != num_nodes - 1 or not np.all(seen):
+        raise ValueError("graph must be connected")
+    return tree_edge_order
+
+
 def _normalize_pi(pi: np.ndarray) -> np.ndarray:
     """Normalize a positive stationary distribution candidate to unit mass.
 
@@ -170,6 +205,43 @@ def _validate_reversibility(
         raise ValueError("graph is not reversible under the supplied stationary distribution")
 
 
+def _infer_pi_from_reversible_rates_kernel(
+    src: jax.Array,
+    dst: jax.Array,
+    rev: jax.Array,
+    q: jax.Array,
+    tree_edge_order: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """Infer ``pi`` numerically from a fixed BFS tree order."""
+
+    src = jnp.asarray(src, dtype=jnp.int32)
+    dst = jnp.asarray(dst, dtype=jnp.int32)
+    rev = jnp.asarray(rev, dtype=jnp.int32)
+    q = jnp.asarray(q, dtype=jnp.float64)
+    tree_edge_order = jnp.asarray(tree_edge_order, dtype=jnp.int32)
+
+    num_nodes = tree_edge_order.shape[0] + 1
+    log_q = jnp.log(q)
+    log_pi0 = jnp.zeros((num_nodes,), dtype=log_q.dtype)
+
+    def propagate(log_pi: jax.Array, edge_idx: jax.Array) -> tuple[jax.Array, None]:
+        x = src[edge_idx]
+        y = dst[edge_idx]
+        implied = log_pi[x] + log_q[edge_idx] - log_q[rev[edge_idx]]
+        return log_pi.at[y].set(implied), None
+
+    log_pi, _ = jax.lax.scan(propagate, log_pi0, tree_edge_order)
+    shifted = log_pi - jnp.max(log_pi)
+    weights = jnp.exp(shifted)
+    pi = weights / jnp.sum(weights)
+    edge_residual = (log_pi[dst] - log_pi[src]) - (log_q - log_q[rev])
+    max_abs_edge_residual = jnp.max(jnp.abs(edge_residual))
+    return pi, max_abs_edge_residual
+
+
+_infer_pi_from_reversible_rates_kernel_jit = jax.jit(_infer_pi_from_reversible_rates_kernel)
+
+
 def _infer_pi_from_reversible_rates(
     num_nodes: int,
     src: np.ndarray,
@@ -179,44 +251,23 @@ def _infer_pi_from_reversible_rates(
     *,
     tol_ratio: float,
 ) -> np.ndarray:
-    """Infer ``pi`` from reversible directed rates using log-ratio propagation.
+    """Infer ``pi`` from reversible directed rates using a JAX numeric kernel.
 
     Raises:
         ValueError: If cycle consistency fails or the graph is disconnected.
     """
 
-    adjacency: list[list[int]] = [[] for _ in range(num_nodes)]
-    for edge_idx, x in enumerate(src.tolist()):
-        adjacency[x].append(edge_idx)
-
-    log_pi = np.full(num_nodes, np.nan, dtype=np.float64)
-    root = 0
-    log_pi[root] = 0.0
-    parent = np.full(num_nodes, -1, dtype=np.int32)
-    queue: deque[int] = deque([root])
-
-    while queue:
-        x = queue.popleft()
-        for edge_idx in adjacency[x]:
-            y = int(dst[edge_idx])
-            implied = log_pi[x] + np.log(q[edge_idx]) - np.log(q[rev[edge_idx]])
-            if np.isnan(log_pi[y]):
-                log_pi[y] = implied
-                parent[y] = x
-                queue.append(y)
-            else:
-                residual = log_pi[y] - implied
-                if abs(residual) > tol_ratio:
-                    raise ValueError(
-                        "cycle inconsistency detected while inferring stationary distribution"
-                    )
-
-    if np.any(np.isnan(log_pi)):
-        raise ValueError("graph must be connected")
-
-    shifted = log_pi - np.max(log_pi)
-    pi = np.exp(shifted)
-    return _normalize_pi(pi)
+    tree_edge_order = _build_bfs_tree_edge_order(num_nodes, src, dst)
+    pi, max_abs_edge_residual = _infer_pi_from_reversible_rates_kernel_jit(
+        src=jnp.asarray(src, dtype=jnp.int32),
+        dst=jnp.asarray(dst, dtype=jnp.int32),
+        rev=jnp.asarray(rev, dtype=jnp.int32),
+        q=jnp.asarray(q, dtype=jnp.float64),
+        tree_edge_order=jnp.asarray(tree_edge_order, dtype=jnp.int32),
+    )
+    if float(max_abs_edge_residual) > tol_ratio:
+        raise ValueError("cycle inconsistency detected while inferring stationary distribution")
+    return _normalize_pi(np.asarray(pi))
 
 
 def _finalize_graph(

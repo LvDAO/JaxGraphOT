@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import jax
 import numpy as np
+import pytest
 
 from jgot import GraphSpec, LogMeanOps
+from jgot.linear_solvers import (
+    _build_ceh_constraint_pullback,
+    _build_ceh_matvec,
+    _build_ceh_rhs,
+    _solve_tridiagonal_javg_thomas_reference,
+    solve_tridiagonal_javg,
+)
 from jgot.operators import continuity_residual
 from jgot.projections import (
     project_ceh,
@@ -17,6 +25,14 @@ from jgot.projections import (
 
 def _path_graph() -> GraphSpec:
     return GraphSpec.from_undirected_weights(3, [0, 1], [1, 2], [1.0, 1.0])
+
+
+def _zero_mean_basis(dim: int) -> np.ndarray:
+    raw = np.zeros((dim, dim - 1), dtype=np.float64)
+    raw[:-1, :] = np.eye(dim - 1, dtype=np.float64)
+    raw[-1, :] = -1.0
+    basis, _ = np.linalg.qr(raw)
+    return basis
 
 
 
@@ -68,6 +84,53 @@ def test_project_javg_enforces_time_averaging() -> None:
     )
 
 
+@pytest.mark.parametrize(("num_steps", "num_nodes"), [(2, 1), (4, 3), (7, 5)])
+def test_solve_tridiagonal_javg_matches_thomas_reference(num_steps: int, num_nodes: int) -> None:
+    rng = np.random.default_rng(100 * num_steps + num_nodes)
+    rhs = rng.normal(size=(num_steps, num_nodes))
+    rho = np.zeros((num_steps + 1, num_nodes), dtype=np.float64)
+    endpoint = np.zeros((num_nodes,), dtype=np.float64)
+
+    lam = solve_tridiagonal_javg(rhs, rho, endpoint, endpoint)
+    lam_ref = _solve_tridiagonal_javg_thomas_reference(rhs)
+
+    np.testing.assert_allclose(np.asarray(lam), np.asarray(lam_ref), atol=1e-12, rtol=1e-12)
+
+
+def test_solve_tridiagonal_javg_matches_eager_under_jit() -> None:
+    rhs = np.array([[0.5, -0.25], [1.0, 0.75], [-0.5, 0.25]], dtype=np.float64)
+    rho = np.zeros((rhs.shape[0] + 1, rhs.shape[1]), dtype=np.float64)
+    endpoint = np.zeros((rhs.shape[1],), dtype=np.float64)
+
+    def run_once(rhs_value):
+        return solve_tridiagonal_javg(rhs_value, rho, endpoint, endpoint)
+
+    eager = run_once(rhs)
+    jitted = jax.jit(run_once)(rhs)
+    np.testing.assert_allclose(np.asarray(jitted), np.asarray(eager), atol=1e-12, rtol=1e-12)
+
+
+def test_project_javg_matches_thomas_reference_projection() -> None:
+    rho = np.array([[1.2, 0.8], [1.0, 1.0], [0.8, 1.2]], dtype=np.float64)
+    rho_bar = np.array([[0.9, 1.1], [1.1, 0.9]], dtype=np.float64)
+    rho_a = rho[0]
+    rho_b = rho[-1]
+
+    rhs = rho_bar - 0.5 * (rho[:-1] + rho[1:])
+    rhs[0] = rho_bar[0] - 0.5 * (rho_a + rho[1])
+    rhs[-1] = rho_bar[-1] - 0.5 * (rho_b + rho[-2])
+    lam_ref = np.asarray(_solve_tridiagonal_javg_thomas_reference(rhs))
+    rho_expected = rho.copy()
+    rho_expected[0] = rho_a
+    rho_expected[-1] = rho_b
+    rho_expected[1:-1] = rho[1:-1] + 0.5 * (lam_ref[:-1] + lam_ref[1:])
+    rho_bar_expected = rho_bar - lam_ref
+
+    rho_pr, rho_bar_pr = project_javg(rho, rho_bar, rho_a, rho_b)
+    np.testing.assert_allclose(np.asarray(rho_pr), rho_expected, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(rho_bar_pr), rho_bar_expected, atol=1e-12, rtol=1e-12)
+
+
 
 def test_project_jeq_is_midpoint() -> None:
     a = np.array([[1.0, 2.0]])
@@ -101,7 +164,7 @@ def test_project_ceh_enforces_boundary_and_continuity() -> None:
     assert int(cg_iters) > 0
 
 
-def test_project_ceh_paper_enforces_boundary_and_continuity() -> None:
+def test_project_ceh_block_jacobi_enforces_boundary_and_continuity() -> None:
     graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
     rho = np.array([[1.2, 0.8], [1.1, 0.9], [0.7, 1.3]])
     m = np.zeros((2, graph.num_edges))
@@ -113,9 +176,9 @@ def test_project_ceh_paper_enforces_boundary_and_continuity() -> None:
         m,
         rho_a,
         rho_b,
-        cg_max_iters=96,
+        cg_max_iters=64,
         cg_tol=1e-12,
-        numerics_mode="paper",
+        cg_preconditioner="block_jacobi",
     )
     np.testing.assert_allclose(np.asarray(rho_pr)[0], rho_a)
     np.testing.assert_allclose(np.asarray(rho_pr)[-1], rho_b)
@@ -125,7 +188,7 @@ def test_project_ceh_paper_enforces_boundary_and_continuity() -> None:
     assert int(cg_iters) > 0
 
 
-def test_project_ceh_paper_matches_eager_under_jit() -> None:
+def test_project_ceh_block_jacobi_matches_eager_under_jit() -> None:
     graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
     rho = np.array([[1.2, 0.8], [1.1, 0.9], [0.7, 1.3]])
     m = np.zeros((2, graph.num_edges))
@@ -139,9 +202,9 @@ def test_project_ceh_paper_matches_eager_under_jit() -> None:
             m_value,
             rho_a,
             rho_b,
-            cg_max_iters=96,
+            cg_max_iters=64,
             cg_tol=1e-12,
-            numerics_mode="paper",
+            cg_preconditioner="block_jacobi",
         )
 
     eager = run_once(rho, m)
@@ -153,3 +216,63 @@ def test_project_ceh_paper_matches_eager_under_jit() -> None:
             atol=1e-9,
             rtol=1e-9,
         )
+
+
+def test_project_ceh_block_jacobi_matches_dense_reference_on_tiny_problem() -> None:
+    graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
+    rho = np.array([[1.2, 0.8], [1.1, 0.9], [0.7, 1.3]], dtype=np.float64)
+    m = np.zeros((2, graph.num_edges), dtype=np.float64)
+    rho_a = np.array([1.5, 0.5], dtype=np.float64)
+    rho_b = np.array([0.5, 1.5], dtype=np.float64)
+
+    rho_pr, m_pr, phi, _, _ = project_ceh(
+        graph,
+        rho,
+        m,
+        rho_a,
+        rho_b,
+        cg_max_iters=128,
+        cg_tol=1e-12,
+        cg_preconditioner="block_jacobi",
+    )
+    matvec = _build_ceh_matvec(graph, rho, m)
+    rhs = np.asarray(_build_ceh_rhs(graph, rho, m, rho_a, rho_b))
+    shape = rhs.shape
+    size = rhs.size
+    matrix = np.column_stack(
+        [
+            np.asarray(matvec(np.eye(size, dtype=np.float64)[k].reshape(shape))).reshape(-1)
+            for k in range(size)
+        ]
+    )
+    basis = _zero_mean_basis(size)
+    phi_ref_flat = basis @ np.linalg.solve(
+        basis.T @ matrix @ basis,
+        basis.T @ rhs.reshape(-1),
+    )
+    phi_ref = phi_ref_flat.reshape(shape)
+
+    _, pullback = _build_ceh_constraint_pullback(
+        graph,
+        jax.numpy.asarray(rho),
+        jax.numpy.asarray(m),
+    )
+    drho_int_adj_ref, dm_adj_ref = pullback(jax.numpy.asarray(phi_ref))
+    node_weight = np.asarray(graph.pi)[None, :]
+    edge_weight = (
+        0.5
+        * np.asarray(graph.q)[None, :]
+        * np.asarray(graph.pi)[np.asarray(graph.src)][None, :]
+    )
+    drho_int_ref = np.asarray(drho_int_adj_ref) / np.maximum(node_weight, 1e-30)
+    dm_ref = np.asarray(dm_adj_ref) / np.maximum(edge_weight, 1e-30)
+    drho_ref = np.zeros_like(rho)
+    drho_ref[1:-1] = drho_int_ref
+    rho_pr_ref = rho - drho_ref
+    rho_pr_ref[0] = rho_a
+    rho_pr_ref[-1] = rho_b
+    m_pr_ref = m - dm_ref
+
+    np.testing.assert_allclose(np.asarray(phi), phi_ref, atol=1e-8, rtol=1e-8)
+    np.testing.assert_allclose(np.asarray(rho_pr), rho_pr_ref, atol=1e-8, rtol=1e-8)
+    np.testing.assert_allclose(np.asarray(m_pr), m_pr_ref, atol=1e-8, rtol=1e-8)
