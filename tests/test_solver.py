@@ -120,6 +120,30 @@ def test_solver_zero_distance_for_identical_endpoints_in_paper_mode() -> None:
     assert solution.iterations_used == 1
 
 
+@pytest.mark.parametrize(
+    ("rho_a", "rho_b", "message"),
+    [
+        (np.array([np.nan, np.nan]), np.array([1.0, 1.0]), "rho_a must be finite"),
+        (np.array([1.0, 1.0]), np.array([np.inf, 0.0]), "rho_b must be finite"),
+    ],
+)
+def test_solver_rejects_nonfinite_endpoint_densities(
+    rho_a: np.ndarray,
+    rho_b: np.ndarray,
+    message: str,
+) -> None:
+    graph = GraphSpec.from_undirected_weights(2, [0], [1], [1.0])
+    problem = OTProblem(
+        graph=graph,
+        time=TimeDiscretization(12),
+        rho_a=rho_a,
+        rho_b=rho_b,
+        mean_ops=LogMeanOps(),
+    )
+    with pytest.raises(ValueError, match=message):
+        solve_ot(problem)
+
+
 def test_solver_is_symmetric_on_two_node_problem() -> None:
     forward = _two_node_problem(-0.4, 0.4, num_steps=24)
     backward = _two_node_problem(0.4, -0.4, num_steps=24)

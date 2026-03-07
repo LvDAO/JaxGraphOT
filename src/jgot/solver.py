@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import jax
 import jax.numpy as jnp
 
@@ -18,10 +20,12 @@ def _validate_density(name: str, rho: Array, pi: Array, num_nodes: int) -> None:
     rho = jnp.asarray(rho, dtype=jnp.float64)
     if rho.ndim != 1 or rho.shape[0] != num_nodes:
         raise ValueError(f"{name} must have shape ({num_nodes},)")
+    if bool(jnp.any(~jnp.isfinite(rho))):
+        raise ValueError(f"{name} must be finite")
     if bool(jnp.any(rho < -1e-12)):
         raise ValueError(f"{name} must be nonnegative")
     mass = float(jnp.sum(pi * rho))
-    if abs(mass - 1.0) > 1e-8:
+    if not math.isfinite(mass) or abs(mass - 1.0) > 1e-8:
         raise ValueError(f"{name} must satisfy sum(pi * rho) == 1")
 
 

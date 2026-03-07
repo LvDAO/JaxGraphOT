@@ -236,6 +236,20 @@ def test_missing_reverse_edge_is_rejected() -> None:
         GraphSpec.from_directed_rates(2, [0], [1], [1.0])
 
 
+@pytest.mark.parametrize("rate", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("check_reversible", [True, False])
+def test_directed_rates_reject_nonfinite_edge_rates(rate: float, check_reversible: bool) -> None:
+    with pytest.raises(ValueError, match="rates must be finite"):
+        GraphSpec.from_directed_rates(
+            2,
+            [0, 1],
+            [1, 0],
+            [rate, 1.0],
+            pi=[0.5, 0.5],
+            check_reversible=check_reversible,
+        )
+
+
 def test_disconnected_graph_is_rejected() -> None:
     with pytest.raises(ValueError, match="connected"):
         GraphSpec.from_undirected_weights(3, [0], [1], [1.0])

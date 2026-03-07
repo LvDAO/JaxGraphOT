@@ -403,6 +403,8 @@ def build_graph_from_directed_rates(
         raise ValueError("num_nodes must be at least 2")
     if np.any((src_arr < 0) | (src_arr >= num_nodes) | (dst_arr < 0) | (dst_arr >= num_nodes)):
         raise ValueError("edge endpoints are out of range")
+    if not np.all(np.isfinite(q_arr)):
+        raise ValueError("rates must be finite")
     if np.any(q_arr <= 0):
         raise ValueError("rates must be strictly positive")
 
